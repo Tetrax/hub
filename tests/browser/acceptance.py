@@ -106,6 +106,7 @@ def main() -> int:
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     password = ADMIN_PASSWORD or secrets.token_urlsafe(24)
     generated = not ADMIN_PASSWORD
+    created_admin = False
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
@@ -144,6 +145,7 @@ def main() -> int:
                 page.get_by_role("button", name="Créer le compte").click()
                 page.wait_for_url("**/admin/", timeout=10000)
                 admin_ready = True
+                created_admin = True
                 check("Première configuration admin créée", True)
             if admin_ready:
                 check("Tableau de bord accessible", "Tableau de bord" in page.content())
@@ -490,7 +492,7 @@ def main() -> int:
     failed = sum(1 for _, ok, _, skipped in results if not ok and not skipped)
     total = sum(1 for _, _, _, skipped in results if not skipped)
     print(f"\n{passed}/{total} vérifications navigateur passées ({failed} échec(s))")
-    if generated:
+    if created_admin:
         print("(compte administrateur de test créé : à réinitialiser si non destiné à l'usage)")
     return 0 if failed == 0 else 1
 
