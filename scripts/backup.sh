@@ -7,6 +7,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Les certificats (/var/lib/hub) et la clé de session (0600) exigent root :
+# la sauvegarde complète s'exécute sous sudo (réélévation automatique).
+if [ "$(id -u)" -ne 0 ]; then
+  if sudo -n true 2>/dev/null; then
+    exec sudo HUB_BACKUP_DIR="${HUB_BACKUP_DIR:-}" HUB_BACKUP_KEEP="${HUB_BACKUP_KEEP:-}" "$0" "$@"
+  fi
+  echo "Sauvegarde complète requise : relancer avec sudo scripts/backup.sh" >&2
+  exit 1
+fi
+
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="${HUB_BACKUP_DIR:-/home/tetrax/backups/hub}"
 KEEP="${HUB_BACKUP_KEEP:-10}"
@@ -48,15 +58,14 @@ ARCHIVE="$DEST/hub-backup-$STAMP.tar.gz"
 tar -czf "$ARCHIVE" -C "$TMP" .
 chmod 600 "$ARCHIVE"
 
-if sudo -n true 2>/dev/null; then
+if [ "$(id -u)" -eq 0 ]; then
   CERT_ARCHIVE="$DEST/hub-certificates-$STAMP.tar.gz"
-  if sudo tar -czf "$CERT_ARCHIVE" -C /var/lib/hub certificates 2>/dev/null; then
-    sudo chown "$(id -u):$(id -g)" "$CERT_ARCHIVE" 2>/dev/null || true
+  if tar -czf "$CERT_ARCHIVE" -C /var/lib/hub certificates 2>/dev/null; then
     chmod 600 "$CERT_ARCHIVE"
     echo "Certificats : $CERT_ARCHIVE"
   fi
 else
-  echo "sudo indisponible : certificats non sauvegardés (relancer avec sudo si nécessaire)." >&2
+  echo "root requis pour les certificats." >&2
 fi
 
 echo "Sauvegarde : $ARCHIVE"
