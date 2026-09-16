@@ -1,0 +1,47 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Supprimer « {{ category['name'] }} »</h1>
+    <p class="admin-sub">{{ apps|length }} application{{ 's' if apps|length != 1 else '' }}
+      utilise{{ 'nt' if apps|length != 1 else '' }} cette catégorie.</p>
+  </div>
+  <a class="button button-ghost" href="{{ url_for('admin.categories_list') }}">Annuler</a>
+</div>
+
+<div class="panel">
+  <table class="admin-table">
+    <thead>
+      <tr><th scope="col">Application</th><th scope="col">Visibilité</th></tr>
+    </thead>
+    <tbody>
+      {% for app in apps %}
+      <tr>
+        <td>{{ app['name'] }}</td>
+        <td class="cell-muted">{{ 'Affichée' if app['enabled'] else 'Masquée' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<form method="post" action="{{ url_for('admin.category_delete', category_id=category['id']) }}" class="panel">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <h2 class="panel-title">Réassigner puis supprimer</h2>
+  <p class="panel-sub">Aucune application ne sera laissée sans catégorie : elles seront déplacées
+    vers la catégorie choisie avant la suppression.</p>
+  <div class="form-field">
+    <label class="form-label" for="reassign_to">Nouvelle catégorie pour ces applications</label>
+    <select class="select" id="reassign_to" name="reassign_to">
+      {% for target in targets %}
+      <option value="{{ target['id'] }}"
+              {% if fallback and target['id'] == fallback['id'] %}selected{% endif %}>{{ target['name'] }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-actions">
+    <button class="button button-danger" type="submit">Réassigner et supprimer</button>
+    <a class="button button-ghost" href="{{ url_for('admin.categories_list') }}">Annuler</a>
+  </div>
+</form>
+{% endblock %}

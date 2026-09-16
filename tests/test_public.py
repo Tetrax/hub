@@ -6,7 +6,7 @@ import io
 import json
 import sqlite3
 
-from conftest import PNG_BYTES, create_catalog_app, session_csrf
+from conftest import PNG_BYTES, create_catalog_app, ensure_category, session_csrf
 
 
 def set_enabled(app, app_id: int, enabled: bool) -> None:
@@ -44,7 +44,7 @@ def test_order_respected(app, client):
 def test_category_filter_and_search(app, client):
     create_catalog_app(app, slug="flow", name="FortiFlow", category="Fortinet")
     create_catalog_app(app, slug="anon", name="FortiAnonymous", category="Sécurité")
-    body = client.get("/?category=Fortinet").get_data(as_text=True)
+    body = client.get("/?category=fortinet").get_data(as_text=True)
     assert "FortiFlow" in body and "FortiAnonymous" not in body
     body = client.get("/?q=anon").get_data(as_text=True)
     assert "FortiAnonymous" in body and "FortiFlow" not in body
@@ -68,7 +68,7 @@ def test_image_served_and_cached(app, admin):
             "slug": "avec-image",
             "description": "",
             "url": "https://exemple.valdev.me",
-            "category": "Autres",
+            "category_id": ensure_category(app, "Autres"),
             "status": "production",
             "_csrf": csrf,
             "image": (io.BytesIO(PNG_BYTES), "x.png"),

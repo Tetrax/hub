@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app import create_app
 
-from conftest import ADMIN_PASSWORD, session_csrf, setup_admin
+from conftest import ADMIN_PASSWORD, ensure_category, session_csrf, setup_admin
 
 
 def test_security_headers_on_public_pages(app, client):
@@ -91,7 +91,7 @@ def test_uploaded_asset_served_with_image_type(app, admin):
             "slug": "image-test",
             "description": "",
             "url": "https://exemple.valdev.me",
-            "category": "Autres",
+            "category_id": ensure_category(app, "Autres"),
             "status": "production",
             "_csrf": csrf,
             "image": (io.BytesIO(PNG_BYTES), "x.png"),

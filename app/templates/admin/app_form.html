@@ -35,12 +35,27 @@
                 maxlength="400">{{ values.description }}</textarea>
     </div>
     <div class="form-field">
-      <label class="form-label" for="category">Catégorie</label>
-      <input class="input" id="category" name="category" value="{{ values.category }}"
-             list="category-list" maxlength="40">
-      <datalist id="category-list">
-        {% for category in categories %}<option value="{{ category }}"></option>{% endfor %}
-      </datalist>
+      <label class="form-label" for="category_id">Catégorie</label>
+      <div class="select-row">
+        <select class="select" id="category_id" name="category_id" required>
+          {% for category in categories %}
+          <option value="{{ category['id'] }}"
+                  {% if values.category_id == category['id']|string %}selected{% endif %}>{{ category['name'] }}</option>
+          {% endfor %}
+        </select>
+        <button class="button button-small button-ghost" type="button" data-quick-add-toggle hidden>
+          + Nouvelle catégorie
+        </button>
+      </div>
+      <div class="quick-add" data-quick-add hidden
+           data-endpoint="{{ url_for('admin.category_quick_create') }}">
+        <label class="visually-hidden" for="new-category">Nom de la nouvelle catégorie</label>
+        <input class="input" id="new-category" maxlength="40" placeholder="Nom de la catégorie"
+               data-quick-add-input>
+        <button class="button button-small button-primary" type="button" data-quick-add-submit>Créer</button>
+      </div>
+      <p class="form-hint" data-quick-add-status role="status" aria-live="polite" hidden></p>
+      <p class="form-hint">Liste gérée dans <a href="{{ url_for('admin.categories_list') }}">Catégories</a>.</p>
     </div>
     <div class="form-field">
       <label class="form-label" for="status">Statut</label>

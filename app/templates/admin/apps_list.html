@@ -10,7 +10,7 @@
 
 <section class="panel">
   {% if apps %}
-  <table class="admin-table">
+  <table class="admin-table admin-table-apps">
     <thead>
       <tr>
         <th scope="col">Ordre</th>
@@ -31,7 +31,7 @@
           <strong>{{ app['name'] }}</strong><br>
           <span class="cell-muted mono">{{ app['slug'] }}</span>
         </td>
-        <td>{{ app['category'] }}</td>
+        <td>{{ app['category_name'] or '—' }}</td>
         <td>{{ statuses[app['status']] }}</td>
         <td>
           {% if app['enabled'] %}

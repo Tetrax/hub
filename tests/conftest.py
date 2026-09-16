@@ -217,16 +217,35 @@ def admin(app, client):
     return client
 
 
+def ensure_category(app, name: str) -> int:
+    """Retourne l'id de la catégorie `name`, en la créant si nécessaire."""
+    from app import auth as auth_module
+    from app import catalog as catalog_module
+
+    with app.app_context():
+        connection = auth_module.db_connection()
+        row = connection.execute(
+            "SELECT id FROM categories WHERE name = ? COLLATE NOCASE", (name,)
+        ).fetchone()
+        if row is not None:
+            return int(row["id"])
+        created, error = catalog_module.create_category(connection, name)
+        assert error is None, error
+        assert created is not None
+        return int(created["id"])
+
+
 def create_catalog_app(app, **overrides) -> int:
     from app import auth as auth_module
     from app import catalog as catalog_module
 
+    category_name = overrides.pop("category", "Fortinet")
     data = {
         "slug": "fortiflow",
         "name": "FortiFlow",
         "description": "Analyse de logs FortiGate.",
         "url": "https://fortiflow.valdev.me",
-        "category": "Fortinet",
+        "category_id": ensure_category(app, category_name),
         "status": "production",
     }
     data.update(overrides)

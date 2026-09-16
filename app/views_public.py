@@ -25,8 +25,8 @@ def index():
     connection = auth.db_connection()
     category = (request.args.get("category") or "").strip() or None
     query = (request.args.get("q") or "").strip() or None
-    apps = catalog.list_apps(connection, enabled_only=True, category=category, query=query)
-    categories = catalog.categories_in_use(connection)
+    apps = catalog.list_apps(connection, enabled_only=True, category_slug=category, query=query)
+    categories = catalog.public_categories(connection)
     open_new_tab = db.get_setting(connection, "open_links_new_tab", "1") == "1"
     response = make_response(
         render_template(

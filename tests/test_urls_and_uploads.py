@@ -6,9 +6,9 @@ import pytest
 
 from app import uploads
 from app.urls import (
+    STATUS_LABELS,
     slugify,
     validate_app_url,
-    validate_category,
     validate_description,
     validate_name,
     validate_slug,
@@ -93,9 +93,14 @@ def test_name_and_description_limits():
     assert validate_description("Description courte.")[1] is None
 
 
-def test_category_default_and_limit():
-    assert validate_category("")[0] == "Autres"
-    assert validate_category("x" * 41)[1] is not None
+def test_category_name_validation():
+    from app.urls import validate_category_name
+
+    assert validate_category_name("  Réseau  ")[0] == "Réseau"
+    assert validate_category_name("Interne   SNS")[0] == "Interne SNS"
+    assert validate_category_name("")[1] is not None
+    assert validate_category_name("x" * 41)[1] is not None
+    assert validate_category_name("bad\x00name")[1] is not None
     assert validate_status("Production")[0] == "production"
     assert validate_status("inconnu")[1] is not None
 

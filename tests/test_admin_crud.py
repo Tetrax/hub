@@ -6,7 +6,7 @@ import io
 import sqlite3
 from pathlib import Path
 
-from conftest import JPEG_LIKE, PNG_BYTES, create_catalog_app, session_csrf
+from conftest import JPEG_LIKE, PNG_BYTES, create_catalog_app, ensure_category, session_csrf
 
 
 def make_payload(**overrides) -> dict:
@@ -15,18 +15,25 @@ def make_payload(**overrides) -> dict:
         "slug": "fortianonymous",
         "description": "Expurgation locale de configurations FortiGate.",
         "url": "https://fortianonymous.valdev.me",
-        "category": "Sécurité",
+        "category": "Sécurité",  # nom résolu en category_id par post_new
         "status": "production",
     }
     data.update(overrides)
     return data
 
 
+def form_data(app, **overrides) -> dict:
+    """Données de formulaire prêtes à poster : la catégorie est résolue en identifiant."""
+    payload = make_payload(**overrides)
+    payload["category_id"] = ensure_category(app, payload.pop("category", "Autres"))
+    return payload
+
+
 def post_new(client, app, **overrides):
     csrf = session_csrf(client, app)
     return client.post(
         "/admin/apps/new",
-        data={**make_payload(**overrides), "_csrf": csrf},
+        data={**form_data(app, **overrides), "_csrf": csrf},
         follow_redirects=False,
     )
 
@@ -69,7 +76,7 @@ def test_create_generates_slug_from_name(app, admin):
             "slug": "",
             "description": "",
             "url": "https://interne.valdev.me",
-            "category": "Interne",
+            "category_id": ensure_category(app, "Interne"),
             "status": "beta",
             "_csrf": csrf,
         },
@@ -92,7 +99,7 @@ def test_edit_app(app, admin):
             "slug": "fortiflow",
             "description": "Mise à jour.",
             "url": "https://fortiflow.valdev.me",
-            "category": "Fortinet",
+            "category_id": ensure_category(app, "Fortinet"),
             "status": "maintenance",
             "_csrf": csrf,
         },
@@ -133,7 +140,7 @@ def test_delete_app_and_image(app, admin):
     response = admin.post(
         "/admin/apps/new",
         data={
-            **make_payload(),
+            **form_data(app),
             "_csrf": csrf,
             "image": (io.BytesIO(PNG_BYTES), "capture.png"),
         },
@@ -170,7 +177,7 @@ def test_upload_replaces_previous_image(app, admin):
     csrf = session_csrf(admin, app)
     admin.post(
         "/admin/apps/new",
-        data={**make_payload(), "_csrf": csrf, "image": (io.BytesIO(PNG_BYTES), "a.png")},
+        data={**form_data(app), "_csrf": csrf, "image": (io.BytesIO(PNG_BYTES), "a.png")},
         content_type="multipart/form-data",
     )
     connection = sqlite3.connect(app.config["DB_PATH"])
@@ -179,7 +186,7 @@ def test_upload_replaces_previous_image(app, admin):
     admin.post(
         "/admin/apps/1/edit",
         data={
-            **make_payload(),
+            **form_data(app),
             "_csrf": csrf,
             "image": (io.BytesIO(JPEG_LIKE), "b.jpg"),
         },
@@ -200,7 +207,7 @@ def test_remove_image_checkbox(app, admin):
     csrf = session_csrf(admin, app)
     admin.post(
         "/admin/apps/new",
-        data={**make_payload(), "_csrf": csrf, "image": (io.BytesIO(PNG_BYTES), "a.png")},
+        data={**form_data(app), "_csrf": csrf, "image": (io.BytesIO(PNG_BYTES), "a.png")},
         content_type="multipart/form-data",
     )
     connection = sqlite3.connect(app.config["DB_PATH"])
@@ -208,7 +215,7 @@ def test_remove_image_checkbox(app, admin):
     connection.close()
     admin.post(
         "/admin/apps/1/edit",
-        data={**make_payload(), "_csrf": csrf, "remove_image": "1"},
+        data={**form_data(app), "_csrf": csrf, "remove_image": "1"},
         content_type="multipart/form-data",
     )
     connection = sqlite3.connect(app.config["DB_PATH"])
@@ -222,7 +229,7 @@ def test_spoofed_image_rejected(app, admin):
     response = admin.post(
         "/admin/apps/new",
         data={
-            **make_payload(),
+            **form_data(app),
             "_csrf": csrf,
             "image": (io.BytesIO(b"<script>alert(1)</script>"), "capture.png"),
         },
@@ -240,7 +247,7 @@ def test_oversized_image_rejected(app, admin):
     big = PNG_BYTES + b"\x00" * (4 * 1024 * 1024)
     response = admin.post(
         "/admin/apps/new",
-        data={**make_payload(), "_csrf": csrf, "image": (io.BytesIO(big), "big.png")},
+        data={**form_data(app), "_csrf": csrf, "image": (io.BytesIO(big), "big.png")},
         content_type="multipart/form-data",
     )
     assert "trop volumineux" in response.get_data(as_text=True)

@@ -16,6 +16,8 @@
        {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Tableau de bord</a>
     <a href="{{ url_for('admin.apps_list') }}"
        {% if active_page == 'apps' %}aria-current="page"{% endif %}>Applications</a>
+    <a href="{{ url_for('admin.categories_list') }}"
+       {% if active_page == 'categories' %}aria-current="page"{% endif %}>Catégories</a>
     <a href="{{ url_for('cert.certificates') }}"
        {% if active_page == 'certificates' %}aria-current="page"{% endif %}>Certificats</a>
     <a href="{{ url_for('admin.settings') }}"

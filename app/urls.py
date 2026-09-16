@@ -92,13 +92,17 @@ def validate_description(raw: str) -> tuple[str, str | None]:
     return description, None
 
 
-def validate_category(raw: str) -> tuple[str, str | None]:
-    category = (raw or "").strip() or "Autres"
-    if len(category) > 40:
+def validate_category_name(raw: str) -> tuple[str, str | None]:
+    """Valide le nom d'une catégorie (entité administrable)."""
+    name = (raw or "").strip()
+    name = re.sub(r"\s{2,}", " ", name)
+    if not name:
+        return "", "Le nom de la catégorie est obligatoire."
+    if len(name) > 40:
         return "", "Catégorie trop longue (40 caractères maximum)."
-    if _CONTROL_RE.search(category):
+    if _CONTROL_RE.search(name):
         return "", "Catégorie invalide."
-    return category, None
+    return name, None
 
 
 def validate_status(raw: str) -> tuple[str, str | None]:

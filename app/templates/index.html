@@ -16,9 +16,9 @@
        data-category-chip data-category=""
        href="{{ url_for('public.index', q=query or none) }}">Toutes</a>
     {% for category in categories %}
-    <a class="chip{% if active_category == category %} chip-active{% endif %}"
-       data-category-chip data-category="{{ category }}"
-       href="{{ url_for('public.index', category=category, q=query or none) }}">{{ category }}</a>
+    <a class="chip{% if active_category == category['slug'] %} chip-active{% endif %}"
+       data-category-chip data-category="{{ category['slug'] }}"
+       href="{{ url_for('public.index', category=category['slug'], q=query or none) }}">{{ category['name'] }}</a>
     {% endfor %}
   </div>
   <form class="search" method="get" action="{{ url_for('public.index') }}" role="search">
@@ -37,7 +37,7 @@
   {% for app in apps %}
   <article class="card" data-card
            data-name="{{ app['name']|lower }}" data-description="{{ app['description']|lower }}"
-           data-category="{{ app['category'] }}">
+           data-category="{{ app['category_slug'] or '' }}">
     <a class="card-link" href="{{ app['url'] }}"
        {% if open_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}
        aria-label="Ouvrir {{ app['name'] }}{% if open_new_tab %} (nouvel onglet){% endif %}">
@@ -51,7 +51,7 @@
         <span class="badge badge-{{ app['status'] }}">{{ statuses[app['status']] }}</span>
       </div>
       <div class="card-body">
-        <p class="card-category">{{ app['category'] }}</p>
+        <p class="card-category">{{ app['category_name'] or 'Autres' }}</p>
         <h2 class="card-title">{{ app['name'] }}</h2>
         {% if app['description'] %}<p class="card-desc">{{ app['description'] }}</p>{% endif %}
         <span class="card-cta">Ouvrir l'application <span aria-hidden="true">→</span></span>

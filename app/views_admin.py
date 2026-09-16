@@ -10,6 +10,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -23,7 +24,6 @@ from .urls import (
     STATUS_LABELS,
     slugify,
     validate_app_url,
-    validate_category,
     validate_description,
     validate_name,
     validate_slug,
@@ -31,8 +31,6 @@ from .urls import (
 )
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
-
-CATEGORY_SUGGESTIONS = ("Fortinet", "Réseau", "Sécurité", "Utilitaires", "Interne", "Autres")
 
 
 def _trusted():
@@ -64,11 +62,6 @@ def _preauth_csrf_ok() -> bool:
     expected = flask_session.get("preauth_csrf")
     submitted = request.form.get("_csrf")
     return bool(expected and submitted and secrets.compare_digest(expected, submitted))
-
-
-def _category_choices(connection) -> list[str]:
-    existing = catalog.categories_in_use(connection)
-    return sorted({*existing, *CATEGORY_SUGGESTIONS})
 
 
 # --- Tableau de bord ---------------------------------------------------------
@@ -202,10 +195,11 @@ def _parse_app_form(form) -> tuple[dict, list[str]]:
         errors.append(error)
     else:
         data["url"] = url
-    category, error = validate_category(form.get("category"))
-    if error:
-        errors.append(error)
-    data["category"] = category
+    raw_category = (form.get("category_id") or "").strip()
+    if raw_category.isdigit():
+        data["category_id"] = int(raw_category)
+    else:
+        errors.append("Catégorie obligatoire : choisissez une catégorie existante.")
     status, error = validate_status(form.get("status"))
     if error:
         errors.append(error)
@@ -221,12 +215,13 @@ def _form_context(connection, session_row, app_row, form):
             raw = app_row[field]
         return str(raw) if raw is not None else default
 
+    fallback = catalog.get_fallback_category(connection)
     values = {
         "name": value("name"),
         "slug": value("slug"),
         "url": value("url"),
         "description": value("description"),
-        "category": value("category", "Autres"),
+        "category_id": value("category_id", str(fallback["id"]) if fallback else ""),
         "status": value("status", "production"),
     }
     return {
@@ -236,7 +231,7 @@ def _form_context(connection, session_row, app_row, form):
         "app": app_row,
         "values": values,
         "remove_image_requested": bool(form.get("remove_image")) if form else False,
-        "categories": _category_choices(connection),
+        "categories": catalog.list_categories(connection),
         "statuses": STATUS_LABELS,
     }
 
@@ -396,6 +391,126 @@ def app_delete(app_id: int):
     current_app.logger.info("Catalogue : application supprimée (id=%s)", app_id)
     flash(f"Application « {app_row['name']} » supprimée.", "success")
     return redirect(url_for("admin.apps_list"))
+
+
+# --- Catégories --------------------------------------------------------------
+
+
+def _category_id_from_form(raw: str | None) -> int | None:
+    value = (raw or "").strip()
+    return int(value) if value.isdigit() else None
+
+
+@bp.get("/categories")
+@auth.admin_required
+def categories_list():
+    session_row = auth.require_session()
+    connection = auth.db_connection()
+    return render_admin(
+        "admin/categories.html",
+        session_row,
+        active_page="categories",
+        categories=catalog.list_categories(connection),
+        fallback=catalog.get_fallback_category(connection),
+    )
+
+
+@bp.post("/categories/create")
+@auth.admin_required
+def category_create():
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    row, error = catalog.create_category(connection, request.form.get("name") or "")
+    if error:
+        flash(error, "error")
+    elif row is not None:
+        current_app.logger.info("Catégories : création « %s »", row["name"])
+        flash(f"Catégorie « {row['name']} » créée.", "success")
+    return redirect(url_for("admin.categories_list"))
+
+
+@bp.post("/categories/<int:category_id>/rename")
+@auth.admin_required
+def category_rename(category_id: int):
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    ok, error = catalog.rename_category(connection, category_id, request.form.get("name") or "")
+    if not ok:
+        flash(error or "Renommage impossible.", "error")
+    else:
+        current_app.logger.info("Catégories : renommage (id=%s)", category_id)
+        flash("Catégorie renommée.", "success")
+    return redirect(url_for("admin.categories_list"))
+
+
+@bp.post("/categories/<int:category_id>/move")
+@auth.admin_required
+def category_move(category_id: int):
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    direction = request.form.get("direction", "")
+    if direction not in {"up", "down"}:
+        abort(400)
+    catalog.move_category(auth.db_connection(), category_id, direction)
+    return redirect(url_for("admin.categories_list"))
+
+
+@bp.route("/categories/<int:category_id>/delete", methods=["GET", "POST"])
+@auth.admin_required
+def category_delete(category_id: int):
+    session_row = auth.require_session()
+    connection = auth.db_connection()
+    category = catalog.get_category(connection, category_id)
+    if category is None:
+        abort(404)
+    if category["is_fallback"]:
+        flash("La catégorie de repli ne peut pas être supprimée.", "error")
+        return redirect(url_for("admin.categories_list"))
+    if request.method == "POST":
+        _require_csrf(session_row)
+        reassign_to = _category_id_from_form(request.form.get("reassign_to"))
+        ok, error, reassigned = catalog.delete_category(connection, category_id, reassign_to)
+        if not ok:
+            flash(error or "Suppression impossible.", "error")
+            return redirect(url_for("admin.categories_list"))
+        current_app.logger.info(
+            "Catégories : suppression (id=%s, applications réassignées=%s)", category_id, reassigned
+        )
+        if reassigned:
+            flash(
+                f"Catégorie « {category['name']} » supprimée ; {reassigned} application"
+                f"{'s' if reassigned != 1 else ''} réassignée{'s' if reassigned != 1 else ''}.",
+                "success",
+            )
+        else:
+            flash(f"Catégorie « {category['name']} » supprimée.", "success")
+        return redirect(url_for("admin.categories_list"))
+    used_apps = catalog.apps_in_category(connection, category_id)
+    return render_admin(
+        "admin/category_delete.html",
+        session_row,
+        active_page="categories",
+        category=category,
+        apps=used_apps,
+        targets=[row for row in catalog.list_categories(connection) if row["id"] != category_id],
+        fallback=catalog.get_fallback_category(connection),
+    )
+
+
+@bp.post("/categories/quick-create")
+@auth.admin_required
+def category_quick_create():
+    """Création rapide depuis le formulaire application (réponse JSON)."""
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    row, error = catalog.create_category(connection, request.form.get("name") or "")
+    if error or row is None:
+        return jsonify(ok=False, error=error or "Création impossible."), 400
+    current_app.logger.info("Catégories : création rapide « %s »", row["name"])
+    return jsonify(ok=True, category={"id": row["id"], "name": row["name"], "slug": row["slug"]})
 
 
 # --- Paramètres et compte ----------------------------------------------------

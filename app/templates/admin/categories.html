@@ -1,0 +1,98 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Catégories</h1>
+    <p class="admin-sub">Les catégories organisent le catalogue et alimentent les filtres du portail.</p>
+  </div>
+  <a class="button button-ghost" href="{{ url_for('admin.apps_list') }}">Voir les applications</a>
+</div>
+
+<div class="panel">
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th scope="col">Catégorie</th>
+        <th scope="col">Applications</th>
+        <th scope="col">Ordre</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for category in categories %}
+      <tr>
+        <td>
+          {% if category['is_fallback'] %}
+          <span class="row-static-name">{{ category['name'] }}</span>
+          {% else %}
+          <form class="row-inline-form" method="post"
+                action="{{ url_for('admin.category_rename', category_id=category['id']) }}">
+            <input type="hidden" name="_csrf" value="{{ csrf }}">
+            <label class="visually-hidden" for="cat-name-{{ category['id'] }}">Nom de la catégorie</label>
+            <input class="input input-compact" id="cat-name-{{ category['id'] }}" name="name"
+                   value="{{ category['name'] }}" maxlength="40" required>
+            <button class="button button-small" type="submit">Renommer</button>
+          </form>
+          {% endif %}
+        </td>
+        <td class="cell-muted">
+          {{ category['usage_count'] }} application{{ 's' if category['usage_count'] != 1 else '' }}
+          {% if category['is_fallback'] %}<span class="cell-tag"
+            title="Catégorie de repli : elle reçoit les applications d'une catégorie supprimée">repli</span>{% endif %}
+        </td>
+        <td>
+          <div class="row-actions">
+            <form method="post" action="{{ url_for('admin.category_move', category_id=category['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="direction" value="up">
+              <button class="button button-small button-ghost" type="submit"
+                      aria-label="Monter {{ category['name'] }}" {% if loop.first %}disabled{% endif %}>↑</button>
+            </form>
+            <form method="post" action="{{ url_for('admin.category_move', category_id=category['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="direction" value="down">
+              <button class="button button-small button-ghost" type="submit"
+                      aria-label="Descendre {{ category['name'] }}" {% if loop.last %}disabled{% endif %}>↓</button>
+            </form>
+          </div>
+        </td>
+        <td>
+          <div class="row-actions">
+            {% if category['is_fallback'] %}
+            <span class="cell-muted">Catégorie de repli protégée</span>
+            {% elif category['usage_count'] %}
+            <a class="button button-small button-danger"
+               href="{{ url_for('admin.category_delete', category_id=category['id']) }}">Supprimer…</a>
+            {% else %}
+            <form method="post" action="{{ url_for('admin.category_delete', category_id=category['id']) }}"
+                  data-confirm="Supprimer la catégorie « {{ category['name'] }} » ?">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <button class="button button-small button-danger" type="submit">Supprimer</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2 class="panel-title">Ajouter une catégorie</h2>
+  <form method="post" action="{{ url_for('admin.category_create') }}" class="row-inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label class="visually-hidden" for="new-category-name">Nom de la nouvelle catégorie</label>
+    <input class="input" id="new-category-name" name="name" maxlength="40" required
+           placeholder="Réseau, Utilitaires…">
+    <button class="button button-primary" type="submit">Ajouter</button>
+  </form>
+  <p class="form-hint">Une catégorie vide n'apparaît pas sur le portail : seules les catégories
+    utilisées par au moins une application affichée génèrent un filtre.</p>
+</div>
+
+{% if fallback %}
+<p class="cell-muted">Catégorie de repli : « {{ fallback['name'] }} » — elle reçoit les applications
+  d'une catégorie supprimée et ne peut pas être supprimée.</p>
+{% endif %}
+{% endblock %}
