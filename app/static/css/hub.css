@@ -11,7 +11,7 @@
   --border-strong: #3a3a44;
   --text: #ececee;
   --muted: #9a9aa3;
-  --muted-2: #6b6b73;
+  --muted-2: #8b8b94;
   --rose: #f4a8c9;
   --rose-pale: #fed2f2;
   --rose-deep: #e07aa8;
@@ -116,7 +116,7 @@ a { color: inherit; text-decoration: none; }
 .search-input::placeholder { color: var(--muted-2); }
 .search-input:focus { border-color: var(--rose); outline: none; box-shadow: 0 0 0 3px rgba(244, 168, 201, 0.15); }
 
-.result-count { margin: 0 0 1.1rem; color: var(--muted-2); font-size: 0.85rem; }
+.result-count { margin: 0 0 1.1rem; color: var(--muted); font-size: 0.85rem; }
 
 /* --- Grille de cartes ----------------------------------------------------- */
 
@@ -136,8 +136,8 @@ a { color: inherit; text-decoration: none; }
 .card-link { display: block; height: 100%; }
 .card-media {
   position: relative; aspect-ratio: 16 / 10; background: #101014; overflow: hidden;
-  border-bottom: 1px solid var(--border);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 .card-media img {
   width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block;
@@ -296,6 +296,7 @@ table.admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .kv { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 0.35rem 1rem; font-size: 0.9rem; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; word-break: break-word; }
+.kv dd.mono { overflow-wrap: anywhere; line-height: 1.5; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.84rem; }
 
 .notice { padding: 0.7rem 0.95rem; border-radius: var(--radius-sm); font-size: 0.88rem; border: 1px solid var(--border-strong); margin: 0 0 1rem; }
