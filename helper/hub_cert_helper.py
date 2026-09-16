@@ -565,11 +565,15 @@ def main(argv: list[str]) -> int:
 
     if args.command in {"install", "renew"}:
         if processor.nginx is None:
+            # Mode sans Nginx local (HUB_CERT_RELOAD_NGINX=0) : l'activation se
+            # limite à la bascule atomique — pas de `nginx -t`, pas de
+            # rechargement, pas de vérification du certificat réellement servi.
+            # C'est un choix d'exploitation explicite (TLS terminé en amont).
             print(
-                "Le rechargement Nginx doit être activé (HUB_CERT_RELOAD_NGINX=1).",
+                "Attention : HUB_CERT_RELOAD_NGINX=0 — activation sans test, sans "
+                "rechargement Nginx et sans vérification du certificat servi.",
                 file=sys.stderr,
             )
-            return 78
         if args.command == "renew":
             lineage = Path(os.environ.get("RENEWED_LINEAGE", ""))
             if not lineage or not (lineage / "fullchain.pem").is_file():

@@ -1,7 +1,10 @@
 [Unit]
 Description=Hub privileged certificate activation helper (SNS Hub)
+# Nginx n'est PAS une dépendance absolue : seul l'ordonnancement est conservé.
+# Avec HUB_CERT_RELOAD_NGINX=1 (défaut) le helper valide et recharge Nginx ;
+# avec HUB_CERT_RELOAD_NGINX=0 il active le certificat sans toucher à Nginx
+# (installation sans Nginx, ou TLS terminé par un proxy externe).
 After=local-fs.target nginx.service
-Requires=nginx.service
 
 [Service]
 Type=simple
@@ -16,7 +19,8 @@ UMask=0027
 RuntimeDirectory=hub-cert-helper
 RuntimeDirectoryMode=0750
 # Répertoires accessibles en écriture : uniquement ceux nécessaires au mécanisme.
-ReadWritePaths=/var/lib/hub/certificates /run/hub-cert-helper /run/nginx.pid /var/log/nginx
+# Le préfixe « - » rend les chemins Nginx optionnels (absent = ignoré, sans échec).
+ReadWritePaths=/var/lib/hub/certificates /run/hub-cert-helper -/run/nginx.pid -/var/log/nginx
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true
