@@ -1,5 +1,6 @@
 # Runtime, secrets et artefacts locaux — jamais versionnés
 runtime/
+backups/
 .env
 .env.*
 !.env.example

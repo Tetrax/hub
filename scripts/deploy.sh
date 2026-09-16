@@ -26,6 +26,7 @@ fi
 
 export HUB_IMAGE_TAG="$SHA"
 export HUB_GIT_SHA="$SHA"
+echo "Fichiers Compose : ${COMPOSE_FILE:-compose.yaml} (COMPOSE_FILE peut venir de .env)"
 docker compose up -d --no-build
 docker compose ps
 

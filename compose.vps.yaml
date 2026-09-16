@@ -1,0 +1,42 @@
+# SNS Hub — surcharge VPS (production https://hub.valdev.me).
+#
+# Vraie surcharge minimale, appliquée PAR-DESSUS `compose.yaml` ; elle ne
+# redéfinit que ce qui est spécifique à cette machine. Elle est versionnée pour
+# que le VPS reste reproductible depuis le dépôt (aucune stack divergente).
+#
+# Utilisation (le fichier `.env` du VPS contient COMPOSE_FILE, cf. `.env.example`) :
+#
+#     docker compose -f compose.yaml -f compose.vps.yaml up -d --no-build
+#
+# Les entrées identiques à la base sont fusionnées/dédupliquées par Compose :
+# ce fichier peut donc répéter le port et le volume pour les documenter.
+
+services:
+  web:
+    container_name: hub-web
+    environment:
+      # Domaine réel, attendu dans le certificat TLS servi par Nginx.
+      HUB_TLS_HOSTNAME: hub.valdev.me
+      # Seul le gateway du réseau Docker dédié est un proxy de confiance
+      # (c'est lui qui source les requêtes arrivant par le port publié).
+      HUB_TRUSTED_PROXY_CIDRS: 172.31.244.1/32
+    ports:
+      # Nginx local (site hub.valdev.me) reste le seul point d'entrée public.
+      - "127.0.0.1:13744:8000"
+    volumes:
+      # Socket du helper certificat root (service systemd hub-cert-helper) :
+      # nécessaire aux imports/activations de certificat depuis l'admin.
+      - type: bind
+        source: /run/hub-cert-helper
+        target: /run/hub-cert-helper
+        read_only: true
+
+networks:
+  default:
+    name: hub_default
+    ipam:
+      config:
+        # Sous-réseau fixé : rend déterministe l'adresse du gateway, donc la
+        # valeur de HUB_TRUSTED_PROXY_CIDRS ci-dessus. Propre à ce VPS (le
+        # risque de conflit avec un SI d'entreprise est écarté ici).
+        - subnet: 172.31.244.0/24
