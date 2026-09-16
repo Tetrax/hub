@@ -1,7 +1,8 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-16 (UTC)
-Statut : **V1.3 déployée en production — portabilité multi-environnement, aucune action ouverte**.
+Statut : **V1.4 livrée — déploiement standalone à HTTPS direct (un seul conteneur),
+aucune action ouverte**.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -10,6 +11,11 @@ Statut : **V1.3 déployée en production — portabilité multi-environnement, a
 
 ## Version et périmètre
 
+- **V1.4** : déploiement **standalone** Portainer — `compose.standalone.yaml`,
+  **un seul conteneur qui sert HTTPS directement** (aucun proxy, aucun helper,
+  aucun socket Docker), certificat temporaire de bootstrap au premier démarrage,
+  remplacement du certificat depuis la page web avec rechargement du serveur et
+  vérification du certificat réellement servi (voir D16, D17).
 - **V1.3** : portabilité — `compose.yaml` générique, surcharge `compose.vps.yaml`,
   configuration par variables (`.env`), helper certificat et Certbot optionnels,
   recette « VM générique » isolée (voir D14, D15).
@@ -67,15 +73,22 @@ HUB_BASE_URL=http://127.0.0.1:13744 HUB_SCOPE=public .venv/bin/python tests/brow
   aucun certificat de test n'a remplacé la paire de production (voir D13 et
   `docs/operations.md` §7 pour la limite des 256 Ko et l'interaction Certbot).
 
-## Portabilité (V1.3)
+## Trois profils de déploiement (V1.4)
 
-Trois profils, **un seul code applicatif** et un seul dépôt :
+Un seul code applicatif, une seule image, un seul dépôt :
 
 | Profil | Infrastructure | Configuration |
 |---|---|---|
 | VPS de production | Nginx local + helper root + Certbot | `COMPOSE_FILE=compose.yaml:compose.vps.yaml` (le `.env` du VPS porte aussi `HUB_BACKUP_DIR=/home/tetrax/backups/hub`) |
-| VM entreprise derrière un proxy / LB | TLS terminé en amont, pas de Nginx ni de helper | `compose.yaml` seul + `HUB_TRUSTED_PROXY_CIDRS=<IP du proxy>` |
-| VM en accès direct | Docker seul | `compose.yaml` seul + `HUB_BIND_IP=0.0.0.0` (+ pare-feu) |
+| Standalone Portainer (**V1.4**) | **Aucun prérequis** : le conteneur sert HTTPS lui-même | `compose.standalone.yaml` + `HUB_HOSTNAME=<FQDN>` (c'est tout) |
+| VM derrière un proxy / LB | TLS terminé en amont | `compose.yaml` seul + `HUB_TRUSTED_PROXY_CIDRS=<IP du proxy>` |
+
+**Standalone** : volumes nommés `hub_data` (base, uploads, clé de session) et
+`hub_certs` (générations + paire active) ; certificat temporaire auto-signé au
+premier démarrage, puis installation du PKCS#12 de la PKI depuis
+`/admin/certificats` — le serveur est rechargé par `SIGHUP` et le certificat
+réellement présenté est vérifié, avec rollback automatique en cas d'échec.
+Recette dédiée : `bash tests/vm/standalone-check.sh` (isolée, production intacte).
 
 Le répertoire de données doit appartenir à `HUB_UID:HUB_GID` :
 `sudo scripts/prepare-data-dir.sh` (erreur explicite et actionnable au démarrage
@@ -97,8 +110,10 @@ sans Nginx, dans un bac à sable `/tmp`).
 ## Prochaines étapes (non engagées)
 
 - Planification automatique de `scripts/backup.sh` (timer systemd) si souhaité.
-- HTTPS 100 % autonome (proxy embarqué) : évolution séparée, seulement si un
-  besoin réel apparaît (voir l'audit de portabilité et D14).
+- Sauvegarde du standalone : les volumes `hub_data`/`hub_certs` se sauvegardent
+  par `docker run --rm -v …:/data …` (à documenter si le besoin apparaît).
+- Redirection HTTP/80 → HTTPS en standalone : non servie par choix (une seule
+  écoute par serveur, voir D16) ; à rouvrir seulement si un besoin réel apparaît.
 - Catégories : icônes/couleurs par catégorie, regroupements sur la landing —
   à décider seulement si le besoin apparaît.
 - Thème : option « suivre le système » explicitement affichée (aujourd'hui c'est

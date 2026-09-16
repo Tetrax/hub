@@ -415,3 +415,63 @@ conditionnel : VPS (Nginx + helper + Certbot), VM avec helper sans Nginx
 (`HUB_CERT_RELOAD_NGINX=0`), VM sans helper (TLS géré par un proxy). Sur le VPS,
 le comportement observé est inchangé (`nginx -t`, reload, vérification du
 certificat servi, rollback).
+
+## D16 — Déploiement standalone : HTTPS direct dans le conteneur (V1.4)
+
+**Contexte.** Les VM d'entreprise utilisent Portainer et n'ont ni Nginx, ni
+Certbot, ni service systemd, ni accès SSH après le déploiement. Le modèle de
+référence existe déjà dans SNS : **FortiUpgrade** déploie un unique conteneur
+applicatif qui termine lui-même TLS (`ssl.SSLContext` + socket enveloppée),
+stocke sa paire dans un volume et l'administre depuis son interface.
+
+**Décision.** Reproduire ce modèle avec la serveur de Hub (gunicorn), sans proxy
+supplémentaire :
+
+- `compose.standalone.yaml` : **un seul service**, `hub_data` + `hub_certs` en
+  volumes nommés, seul HTTPS publié (`${HUB_HTTPS_PORT:-443}` → `8443` interne),
+  **une seule variable à saisir** (`HUB_HOSTNAME`) ;
+- gunicorn sert HTTPS directement (`--certfile`/`--keyfile`, voir
+  `app/gunicorn.conf.py`) sur des ports non privilégiés → ni `CAP_NET_BIND_SERVICE`,
+  ni root, ni socket Docker ;
+- **bootstrap** : l'entrypoint du conteneur (`app/standalone/entrypoint.sh`,
+  transparent hors standalone) crée, avant le démarrage du serveur, un certificat
+  **auto-signé** pour `HUB_HOSTNAME` (`app/certlocal.py`,
+  `bootstrap_certificate`) marqué `.bootstrap` dans le volume. Il survit aux
+  redémarrages, est annoncé comme **temporaire** dans l'interface et disparaît à
+  la première activation réelle ;
+- **rechargement** : l'activation écrit une nouvelle génération, bascule le lien
+  `active`, envoie **SIGHUP au maître gunicorn** (rechargement gracieux : les
+  workers reconstruisent leur contexte SSL depuis les fichiers) puis vérifie que
+  le certificat **réellement présenté** (connexion TLS sur `127.0.0.1:8443`,
+  `SNI = HUB_TLS_HOSTNAME`) correspond — sinon rollback complet. Mécanisme prouvé
+  par prototype isolé : nouveau certificat servi, `RestartCount=0`, aucune requête
+  en échec pendant le rechargement ;
+- **HTTP/80** : non servi (compromis assumé : gunicorn n'écoute qu'un protocole
+  par socket ; ajouter un second serveur pour la seule redirection violerait le
+  principe « un seul serveur simple »). La procédure indique explicitement
+  `https://FQDN`.
+
+**Conséquences.** Aucune étape cachée après le déploiement : ni `ssh`, ni
+`sudo`, ni `mkdir`/`chown` (les volumes nommés sont initialisés depuis l'image
+avec les droits de l'utilisateur applicatif), ni `systemctl`, ni Certbot. Le VPS
+et le mode « derrière un proxy » restent inchangés (même image, même
+`compose.yaml`).
+
+## D17 — Un backend certificat par mode de déploiement, une seule implémentation
+
+**Contexte.** Trois environnements, trois façons de rendre un certificat
+effectif : helper root + Nginx (VPS), proxy d'entreprise (aucune gestion côté
+Hub), serveur HTTPS du conteneur (standalone).
+
+**Décision.** Une seule abstraction (`app/certbackend.py`) choisie par
+`HUB_CERT_BACKEND`, sans condition dispersée dans les vues :
+
+- `helper` (défaut) — `app/certclient.py` → socket → `helper/hub_certctl.py` ;
+- `local` — `app/certlocal.py` → même `hub_certctl` **dans le conteneur**
+  (copié dans l'image, `openssl` installé) + SIGHUP + vérification du certificat
+  servi ;
+- `none` — gestion désactivée, TLS assuré en amont (page informative).
+
+La validation, l'écriture des générations, la bascule atomique et le rollback
+restent assurés par **`helper/hub_certctl.py`** : le standalone ne duplique ni
+les règles de validation, ni les primitives d'activation.

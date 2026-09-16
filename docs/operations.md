@@ -14,6 +14,7 @@ Le déploiement combine deux fichiers versionnés et un fichier local :
 |---|---|
 | `compose.yaml` | **générique et portable** (aucune valeur propre à une machine) |
 | `compose.vps.yaml` | **surcharge du VPS de production** (sous-réseau fixé, proxy de confiance, hostname) |
+| `compose.standalone.yaml` | **standalone Portainer** : HTTPS direct, un seul conteneur, volumes nommés (autonome, ne se combine pas) |
 | `.env` | **configuration locale** (jamais versionnée) : port, bind IP, UID/GID, proxy de confiance, chemins |
 
 `COMPOSE_FILE` (dans `.env`) indique quels fichiers Compose charger :
@@ -21,6 +22,7 @@ Le déploiement combine deux fichiers versionnés et un fichier local :
 ```bash
 COMPOSE_FILE=compose.yaml                      # installation générique (défaut)
 COMPOSE_FILE=compose.yaml:compose.vps.yaml     # VPS avec Nginx + helper locaux
+# standalone : fichier unique, rien à combiner (voir §10)
 ```
 
 Toutes les commandes `docker compose ...` du dépôt (scripts inclus) respectent
@@ -159,10 +161,15 @@ print(c.execute('PRAGMA user_version').fetchone()); print(c.execute('SELECT name
 - **PEM / CRT avancé** : certificat (PEM ou DER), clé privée non chiffrée (PEM ou
   DER) et chaîne PEM optionnelle — comportement d'origine inchangé.
 
-Dans les deux cas : validation complète par le helper → résumé affiché (sujet,
-émetteur, SAN, dates, empreinte, méthode, taille de chaîne) → **activation
-explicite** → bascule atomique, `nginx -t`, reload, vérification du certificat
-réellement servi, rollback automatique en cas d'échec.
+Dans les deux cas : validation complète (mêmes règles partout) → résumé affiché
+(sujet, émetteur, SAN, dates, empreinte, méthode, taille de chaîne) →
+**activation explicite** → bascule atomique, rechargement du serveur,
+vérification du certificat réellement servi, rollback automatique en cas
+d'échec.
+
+Selon le déploiement, la validation et le rechargement sont assurés par le
+**helper root** (VPS : `nginx -t`, reload Nginx) ou par le **serveur HTTPS du
+conteneur** (standalone : `SIGHUP` à gunicorn, aucune intervention sur l'hôte).
 
 > Un certificat importé manuellement reste actif **jusqu'au prochain
 > renouvellement Let's Encrypt** : le timer Certbot (~30 jours avant l'expiration
@@ -170,6 +177,34 @@ réellement servi, rollback automatique en cas d'échec.
 > paire Let's Encrypt. Pour conserver durablement un certificat importé, il faut
 > désactiver le renouvellement pour ce domaine (`sudo certbot renew --cert-name
 > hub.valdev.me ...` ou le timer) — décision d'exploitation, non automatisée ici.
+
+### Déploiement standalone : certificat temporaire puis certificat définitif
+
+Au premier démarrage d'un déploiement `compose.standalone.yaml`, **aucun
+certificat n'existe** : le conteneur génère automatiquement un certificat
+**auto-signé** pour `HUB_HOSTNAME` (volume `hub_certs`, marqueur `.bootstrap`),
+ce qui rend le Hub immédiatement joignable en HTTPS — le navigateur affiche un
+avertissement tant que le certificat définitif n'est pas installé. Cet état est
+annoncé dans `/admin/certificats` (« Certificat temporaire de bootstrap »).
+
+Procédure complète, **sans SSH** :
+
+1. ouvrir `https://<HUB_HOSTNAME>` (accepter l'avertissement du certificat
+   temporaire) ;
+2. créer le compte administrateur (`/admin/setup`) ;
+3. **Administration → Certificats** → sélectionner le **PKCS#12** fourni par la
+   PKI, saisir son mot de passe → *Valider* ;
+4. vérifier le résumé affiché (sujet, SAN = `HUB_HOSTNAME`, dates, chaîne) puis
+   *Activer ce certificat*.
+
+Le serveur est rechargé (SIGHUP) et le certificat **réellement présenté** est
+vérifié : l'interface confirme que le certificat servi correspond à la paire
+gérée. En cas d'échec, la paire précédente est restaurée automatiquement et un
+message explicite est affiché — le Hub reste joignable en HTTPS. Le certificat
+définitif remplace alors le certificat temporaire, qui n'est plus utilisé.
+
+Un certificat **périmé** de bootstrap est régénéré au démarrage suivant ; un
+certificat définitif n'est jamais touché.
 
 ### Consulter / remplacer
 
@@ -332,6 +367,34 @@ Ensuite :
 
 ## 10. Déploiement depuis Portainer
 
+### 10.1 Standalone : HTTPS direct, un seul conteneur (recommandé en VM d'entreprise)
+
+Aucun prérequis sur la machine au-delà de Docker + Portainer, aucun accès SSH :
+
+| Champ Portainer | Valeur |
+|---|---|
+| Repository URL | `https://github.com/Tetrax/hub` |
+| Repository reference | `refs/heads/main` |
+| Compose path | `compose.standalone.yaml` |
+| Environment variables | `HUB_HOSTNAME=hub.sns-security.lan` (obligatoire) · `HUB_HTTPS_PORT=443` (optionnel) |
+
+Puis *Deploy the stack* → attendre `healthy` → ouvrir
+`https://hub.sns-security.lan` → créer le compte administrateur → installer le
+PKCS#12 de la PKI (§7). C'est tout : ni `ssh`, ni `sudo`, ni `mkdir`/`chown`, ni
+`systemctl`, ni Nginx, ni Certbot, ni socket Docker. Les volumes `hub_data` et
+`hub_certs` sont créés et initialisés automatiquement.
+
+Détails utiles :
+
+- seul **HTTPS (443)** est publié ; HTTP/80 n'est pas servi (choix assumé : un
+  serveur unique pour le TLS, voir D16) — indiquer explicitement `https://` ;
+- le port interne (8443) n'est pas privilégié : le conteneur reste **non-root**
+  avec `cap_drop: ALL` et `no-new-privileges` ;
+- mise à jour d'image : redéployer la stack (ou changer `HUB_IMAGE_TAG`) ; les
+  volumes et le certificat actif sont conservés.
+
+### 10.2 Variante générique (Nginx/proxy sur l'hôte, ou VM gérée en SSH)
+
 Le même `compose.yaml` versionné est utilisé — aucune stack spécifique n'est
 créée dans Portainer.
 
@@ -432,6 +495,10 @@ manuel, ou certificat géré par le proxy).
 | Import PKCS#12 : « utilise un algorithme non pris en charge » | bundle produit par un outil ancien (RC2/3DES) ; réexporter en AES/PBES2 ou passer par la méthode PEM |
 | Import PKCS#12 : « ne contient pas de clé privée » | le bundle ne contient qu'un certificat : utiliser la méthode PEM avec la clé séparée |
 | Import refusé : « trop volumineux » | un bundle PKCS#12 fait quelques kilo-octets ; la limite est fixée à 256 Ko |
+| Standalone : avertissement de certificat dans le navigateur | normal tant que le certificat définitif n'est pas installé : `/admin/certificats` → PKCS#12 (§7) |
+| Standalone : « PID du serveur HTTPS introuvable » | le fichier `HUB_GUNICORN_PIDFILE` (`/tmp/gunicorn.pid`) est absent : vérifier que le conteneur a démarré normalement (`docker logs`) |
+| Standalone : activation refusée, « paire précédente restaurée » | le serveur n'a pas présenté la nouvelle paire : vérifier les journaux du conteneur ; le Hub reste disponible avec l'ancienne paire |
+| Standalone : `volume de certificats (/certs) non inscriptible` | volume créé hors de l'image (ou montage en lecture seule) : recréer la stack pour laisser Docker initialiser `hub_certs` |
 
 ## 14. Contrôles de recette
 
@@ -440,6 +507,8 @@ manuel, ou certificat géré par le proxy).
 HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
 HUB_SCOPE=public HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
 bash tests/vm/generic-vm-check.sh                      # VM générique isolée (sans helper/Nginx)
+bash tests/vm/standalone-check.sh                      # standalone TLS direct (projet jetable)
+STANDALONE_CHECK_BROWSER=1 bash tests/vm/standalone-check.sh   # + recette navigateur réelle
 ```
 
 `tests/vm/generic-vm-check.sh` déploie un stack jetable (projet Compose
@@ -450,7 +519,18 @@ imposé, l'UID/GID (dont l'erreur explicite si le répertoire de données
 n'appartient pas au bon utilisateur) et le comportement des en-têtes de proxy
 (trusted vs non trusted). La production n'est jamais touchée.
 
+`tests/vm/standalone-check.sh` déploie `compose.standalone.yaml` dans un projet
+jetable (`hub-standalone-check`, ports 18080/18443) avec des volumes vierges et
+vérifie : certificat temporaire servi, HTTPS, création du compte, import PKCS#12
+avec chaîne, activation, **certificat réellement présenté**, persistance après
+`down`/`up`, refus d'un certificat hors domaine sans bascule, isolation
+(lecture seule, capabilities, volumes) et absence de régression de la production.
+Avec `STANDALONE_CHECK_BROWSER=1`, la recette navigateur réelle est rejouée
+contre ce déploiement (résolution du nom par Chromium, aucun `/etc/hosts` touché).
+
 La recette navigateur exige Playwright + Chromium (`requirements-dev.txt`) ; sur
 un poste neuf : `playwright install chromium`. Variables : `HUB_SCOPE`
 (`full` / `public`), `HUB_ADMIN_PASSWORD` (compte existant), `HUB_SKIP_CERT`
-(instance locale sans helper), `HUB_SHOTS_DIR` (captures de validation).
+(instance locale ou certificat non vérifiable), `HUB_HOST_RESOLVER` (règle de
+résolution Chromium, ex. `MAP hub.intra.example 127.0.0.1`), `HUB_SHOTS_DIR`
+(captures de validation).

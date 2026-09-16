@@ -59,6 +59,7 @@ changent selon le déploiement. Deux profils sont supportés par le même dépô
 | `compose.yaml` | déploiement **générique** : durcissement, healthcheck, image, port, données — aucune valeur propre à une machine | versionné |
 | `compose.vps.yaml` | **surcharge minimale** du VPS : sous-réseau fixé, proxy de confiance local, hostname, socket du helper | versionné |
 | `.env` | valeurs d'installation : `HUB_BIND_IP`, `HUB_PORT`, `HUB_UID/GID`, `HUB_DATA_PATH`, `HUB_TRUSTED_PROXY_CIDRS`, `HUB_TLS_HOSTNAME`, `HUB_BACKUP_DIR`, `COMPOSE_FILE` | local (jamais versionné) |
+| `compose.standalone.yaml` | déploiement **standalone** (Portainer) : HTTPS direct, un seul conteneur, volumes nommés, une seule variable (`HUB_HOSTNAME`) | versionné |
 | `.env.example` | modèle documenté, sans secret | versionné |
 
 `COMPOSE_FILE` (dans `.env`) sélectionne les fichiers :
@@ -76,8 +77,12 @@ structure (vérifié par comparaison des rendus `docker compose config`).
 
 - **Flask 3.1** en rendu serveur (Jinja2), sans framework frontend ; CSS et JS
   faits main (un seul fichier CSS, un seul fichier JS de progressive enhancement).
-- **gunicorn** (2 workers, 4 threads) sert l'application sur `0.0.0.0:8000`
-  dans le conteneur ; le port n'est publié qu'en loopback (`127.0.0.1:13744`).
+- **gunicorn** (2 workers, 4 threads) sert l'application — en HTTP sur
+  `0.0.0.0:8000` derrière Nginx ou un proxy, ou **en HTTPS directement**
+  (`HUB_TLS_CERT`/`HUB_TLS_KEY`, port interne 8443 publié en 443) en standalone.
+  Le contexte SSL est construit par les workers : un `SIGHUP` du maître les
+  redémarre gracieusement et reprend la nouvelle paire, **sans redémarrer le
+  conteneur** (voir D16).
 - **SQLite** (mode WAL) pour le catalogue, les sessions, le compte admin et les
   tentatives de connexion ; **uploads** de screenshots sur disque. Schéma
   versionné (`PRAGMA user_version`) et migré automatiquement au démarrage.
@@ -87,8 +92,11 @@ structure (vérifié par comparaison des rendus `docker compose config`).
   (en-têtes, frontière proxy, origine), `auth.py` (scrypt, sessions, CSRF,
   verrouillage), `uploads.py` (validation par magic bytes), `urls.py`
   (validation d'entrées), `certparse.py` (lecture PKCS#12/PFX et DER, en mémoire),
-  `manage.py` (CLI d'exploitation). `catalog.py` porte aussi les catégories
-  (CRUD, ordre, réassignation).
+  `manage.py` (CLI d'exploitation : `seed`, `reset-admin`, `report-orphans`).
+  `catalog.py` porte aussi les catégories (CRUD, ordre, réassignation).
+  Le parcours certificat passe par **`certbackend.py`** : `certclient.py` (helper
+  du VPS), `certlocal.py` (TLS direct du standalone) ou aucun backend — les vues
+  ne connaissent que ces trois fonctions.
 
 ### 2. Modèle de données
 
@@ -108,7 +116,21 @@ settings(key, value) · admin_users · sessions · login_attempts · cert_valida
   et idempotente, déclenchée par `db.init_db()` au démarrage : aucune
   application, association, position, image ou visibilité n'est perdue.
 
-### 3. Helper certificat (`helper/`, root)
+### 3. Certificats : `hub_certctl` + trois backends
+
+**`helper/hub_certctl.py` est la seule implémentation** de la validation
+(format, dates, SAN/FQDN, clé ↔ certificat, ordre et signatures de chaîne,
+chargement TLS réel) et des primitives d'activation (générations immuables
+`.active-<hash>`, bascule du lien `active` par `os.replace`, verrou
+inter-processus, `restore`, `cleanup_generation`). Elle est utilisée :
+
+- par le **helper root** du VPS (copie installée dans `/opt/hub-cert-helper`) ;
+- par le **backend `local`** du standalone (module copié dans l'image
+  applicative, CLI `openssl` installée) — aucune duplication de règles.
+
+Backends (`HUB_CERT_BACKEND`) : `helper` (défaut) · `local` (standalone, SIGHUP
+du serveur HTTPS + vérification du certificat servi) · `none` (TLS géré en
+amont, page informative).
 
 Service systemd `hub-cert-helper.service`, durci (ProtectSystem=strict,
 NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
@@ -149,6 +171,15 @@ NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
 | Clé de signature des sessions | `runtime/data/.secret_key` (0600) | `/data/.secret_key` | oui (sensible) |
 | Certificat + clé privée gérés | `/var/lib/hub/certificates/` (root) | non monté dans le conteneur | oui (archive séparée root) |
 
+En **standalone**, les mêmes données vivent dans deux volumes Docker nommés
+(initialisés depuis l'image avec les droits de l'utilisateur applicatif, donc
+sans `mkdir`/`chown` sur l'hôte) :
+
+| Volume | Contenu | Montage |
+|---|---|---|
+| `hub_data` | `hub.sqlite`, `uploads/`, `.secret_key` | `/data` |
+| `hub_certs` | générations de certificats, lien `active`, `fullchain.pem` (0644) et `privkey.pem` (0600), marqueur `.bootstrap`, état de rollback | `/certs` |
+
 ## Flux principaux
 
 ### Consultation (public)
@@ -185,6 +216,25 @@ PKCS#12 / PFX (.p12/.pfx [+ mot de passe])          PEM / CRT (avancé)
 La lecture d'un bundle PKCS#12 se fait **dans l'application, en mémoire** : aucun
 fichier temporaire, mot de passe éphémère jamais journalisé ni transmis au helper
 (voir D13). Le helper ne voit que des PEM, comme avant.
+
+### Remplacement du certificat en standalone (TLS direct)
+
+1. L'administrateur importe le **PKCS#12** de la PKI (ou la paire PEM) : le
+   bundle est lu **en mémoire** (`certparse.py`), la chaîne est extraite, la
+   racine auto-signée est omise ; le mot de passe n'est jamais conservé.
+2. La validation utilise `hub_certctl.validate_pair` — **les mêmes règles que le
+   VPS** — puis la paire est déposée dans `hub_certs/staging/<ticket>` (0600,
+   ticket à usage unique, 10 minutes).
+3. L'activation écrit une génération, bascule le lien `active` (atomique), puis
+   envoie **SIGHUP au maître gunicorn** : les workers sont redémarrés
+   gracieusement et reconstruisent leur contexte SSL depuis les fichiers.
+4. Le Hub **vérifie le certificat réellement présenté** (connexion TLS sur
+   `127.0.0.1:8443` avec `SNI = HUB_TLS_HOSTNAME`, comparaison d'empreinte
+   SHA-256) : c'est cette vérification — pas l'écriture sur disque — qui valide
+   l'activation.
+5. En cas d'échec : `restore` de la génération précédente, nouveau SIGHUP,
+   revérification, et message explicite ; la suppression du marqueur
+   `.bootstrap` marque le passage au certificat définitif.
 
 ### Renouvellement Let's Encrypt
 

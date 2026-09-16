@@ -17,6 +17,9 @@ aucune application référencée.
 - **Repository** : `https://github.com/Tetrax/hub`
 - **Image** : `hub:<git-sha>` (labels OCI source/revision/created)
 - **Conteneur** : `hub-web` (Compose projet `hub`), bind `127.0.0.1:13744` → 8000
+- **Trois packagings** : VPS (`compose.yaml` + `compose.vps.yaml`, Nginx + helper),
+  générique (proxy externe), **standalone Portainer** (`compose.standalone.yaml` :
+  un conteneur qui sert HTTPS directement, certificat géré depuis la page web)
 
 ## Stack
 
@@ -34,7 +37,9 @@ CSS/JS faits main (pas de framework frontend), Docker Compose.
 - `deploy/` — fichiers d'infrastructure versionnés (unit systemd, env exemple,
   vhost Nginx du VPS, **exemple Nginx générique**, hook certbot).
 - `compose.yaml` (générique) + `compose.vps.yaml` (surcharge du VPS) + `.env`
-  (local, non versionné) : toute la configuration d'infrastructure.
+  (local, non versionné) : toute la configuration d'infrastructure. Le mode
+  standalone utilise son propre fichier autonome `compose.standalone.yaml`
+  (Portainer ne gère qu'un seul fichier Compose).
 - `scripts/` — build, deploy, backup, install-helper, prepare-data-dir,
   save/load-image (hors ligne).
 - `tests/` — pytest (unitaires/intégration/sécurité/portabilité) + recette
@@ -55,11 +60,14 @@ Détails : `docs/architecture.md`.
 | Authentification admin | `app/auth.py` (scrypt, sessions SQLite, CSRF, verrouillage) |
 | En-têtes de sécurité / frontière proxy | `app/security.py` |
 | Validation des URLs du catalogue | `app/urls.py` |
-| Dialogue app ↔ certificats | `app/certclient.py` + `app/hub_cert_protocol.py` |
+| Choix du backend certificat | `app/certbackend.py` (`helper` \| `local` \| `none`) |
+| Dialogue app ↔ helper (VPS) | `app/certclient.py` + `app/hub_cert_protocol.py` |
+| TLS direct du conteneur (standalone) | `app/certlocal.py` (activation + `SIGHUP` + vérification servie + bootstrap) |
 | Lecture des bundles certificat (PKCS#12/PFX, DER) | `app/certparse.py` (en mémoire) |
-| Validation/activation TLS | `helper/hub_certctl.py` (une seule implémentation) |
+| Validation/activation TLS | `helper/hub_certctl.py` (une seule implémentation, utilisée par le helper **et** par le standalone) |
 | Service privilégié | `helper/hub_cert_helper.py` + `deploy/hub-cert-helper.service` |
-| Déploiement | `compose.yaml` (générique) + `compose.vps.yaml` (surcharge) + `scripts/build.sh` + `scripts/deploy.sh` |
+| Amorçage TLS du standalone | `app/standalone/entrypoint.sh` (transparent hors standalone) + `bootstrap_certificate` |
+| Déploiement | `compose.yaml` (générique) + `compose.vps.yaml` (surcharge) + `compose.standalone.yaml` (Portainer) + `scripts/build.sh` + `scripts/deploy.sh` |
 
 Ne pas créer un second chemin pour une responsabilité déjà couverte (par
 exemple : installer un certificat sans passer par `hub_certctl`, ou écrire
@@ -72,6 +80,11 @@ directement dans `/var/lib/hub/certificates/active`).
   `uploads/` (screenshots, noms `uuid.webp|png|jpg`),
   `.secret_key` (signature des sessions, 0600) ;
 - `/var/lib/hub/certificates/` (générations TLS + lien `active`, root-only).
+
+En **standalone**, tout vit dans des volumes Docker nommés, initialisés depuis
+l'image avec les droits de l'utilisateur applicatif (uid 1000) : `hub_data`
+(→ `/data`) et `hub_certs` (→ `/certs` : générations, lien `active`, paire
+active, marqueur `.bootstrap`). Aucun `mkdir`/`chown` sur l'hôte.
 
 `runtime/` est **hors Git**. Le répertoire de données doit appartenir à
 `HUB_UID:HUB_GID` (`sudo scripts/prepare-data-dir.sh`), sinon le démarrage
@@ -110,6 +123,8 @@ l'infrastructure partagée.
 
 ```bash
 ./scripts/deploy.sh                     # déploiement (commit poussé requis)
+docker compose exec web python -m app.manage seed   # catalogue initial (installation neuve)
+bash tests/vm/standalone-check.sh       # recette standalone TLS direct (isolée)
 sudo ./scripts/backup.sh                # sauvegarde complète
 sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
 sudo scripts/install-helper.sh          # (ré)installation du helper cert root
@@ -133,6 +148,10 @@ docker compose exec web python -m app.manage reset-admin
   Compose jetable, sans Nginx/Certbot/helper) — healthcheck, landing, admin,
   CRUD, uploads, catégories, paramètres, page certificats, réseau, UID/GID,
   en-têtes de proxy.
+- `tests/vm/standalone-check.sh` : recette du déploiement `compose.standalone.yaml`
+  (volumes vierges, certificat temporaire, import PKCS#12, activation, certificat
+  réellement servi, persistance, refus hors domaine, isolation) ; avec
+  `STANDALONE_CHECK_BROWSER=1`, la recette navigateur y est rejouée.
 - `tests/vm/helper-check.sh` : activation du helper **sans Nginx**
   (`HUB_CERT_RELOAD_NGINX=0`), refus propre + absence de bascule en mode
   `reload=1` sans Nginx, socket + `SO_PEERCRED`, unité systemd.
@@ -146,8 +165,9 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Contraintes de sécurité à préserver
 
-- Clé privée : jamais dans Git/l'image/les logs/réponses HTTP ; 0600 root ;
-  jamais montée dans le conteneur.
+- Clé privée : jamais dans Git/l'image/les logs/réponses HTTP ; 0600 root sur le
+  VPS, 0600 utilisateur applicatif dans `hub_certs` en standalone ; jamais
+  exposée hors du volume
 - Aucune requête serveur vers les URLs du catalogue (pas de SSRF).
 - Uploads : validation par magic bytes, taille bornée, noms générés.
 - En-têtes de sécurité applicatifs maintenus ; CSP stricte (pas d'inline).
@@ -160,7 +180,10 @@ docker compose exec web python -m app.manage reset-admin
   `Requires=nginx.service` et les chemins Nginx préfixés `-` sont **volontaires**) ;
 - `compose.yaml` (durcissement du conteneur, points de montage) et
   `compose.vps.yaml` (sous-réseau, proxy de confiance du VPS) ;
-- l'ordre des règles d'accès dans le vhost Nginx (loopback puis allowlist).
+- l'ordre des règles d'accès dans le vhost Nginx (loopback puis allowlist) ;
+- `compose.standalone.yaml` : **un seul service applicatif** et aucun proxy — le
+  conteneur termine lui-même TLS (voir D16) ; `app/certlocal.py` n'envoie jamais
+  de signal à un processus non identifié par le fichier PID du serveur.
 
 ## Conventions
 

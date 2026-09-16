@@ -31,8 +31,9 @@ aucune requête vers elles.
   à la première visite, aucun flash au chargement. La direction artistique
   sombre reste la référence.
 - Gestion du certificat TLS : état complet de la paire active et remplacement
-  en deux temps (valider puis activer) avec bascule atomique, `nginx -t`,
-  rechargement, vérification du certificat réellement servi et rollback.
+  en deux temps (valider puis activer) avec bascule atomique, rechargement du
+  serveur, vérification du certificat réellement servi et rollback — sur le VPS
+  (Nginx via le helper root) comme en standalone (serveur HTTPS du conteneur).
 - Import de certificats (V1.2) : **PKCS#12 / PFX** (`.p12`, `.pfx`, mot de passe
   optionnel) lu en mémoire par l'application — un seul fichier à fournir, la
   chaîne et le certificat feuille sont extraits automatiquement (racine omise),
@@ -44,6 +45,15 @@ aucune requête vers elles.
   Certbot, sans helper**. `compose.yaml` est générique, `compose.vps.yaml` porte
   les spécificités du VPS, `.env` la configuration locale (`HUB_BIND_IP`,
   `HUB_PORT`, `HUB_UID/GID`, `HUB_TRUSTED_PROXY_CIDRS`…).
+- **Déploiement standalone (V1.4)** : `compose.standalone.yaml` — **un seul
+  conteneur** qui sert HTTPS **directement** (aucun Nginx, aucun Caddy, aucun
+  proxy, aucun helper, aucun socket Docker), pensé pour Portainer
+  (*Stacks → Add stack → Repository*). Au premier démarrage, un **certificat
+  temporaire auto-signé** est généré pour le nom DNS fourni : le Hub est
+  immédiatement joignable en HTTPS, on crée son compte, puis on installe le
+  certificat définitif (**PKCS#12 de la PKI**) depuis *Administration →
+  Certificats* — **sans SSH et sans redémarrage** (le serveur est rechargé et le
+  certificat réellement servi est vérifié, avec rollback en cas d'échec).
 
 ## Architecture
 
@@ -53,6 +63,8 @@ Profil VPS        : Nginx (TLS, allowlist IP) → conteneur hub-web (SQLite)
                                           hub-cert-helper (root)
 Profil générique  : proxy/LB d'entreprise (TLS) → conteneur hub-web (SQLite)
                     (aucun Nginx, aucun helper sur l'hôte)
+Profil standalone : navigateur ── HTTPS ──▶ conteneur hub-web   (TLS direct,
+                    SQLite + certificats dans des volumes Docker nommés)
 ```
 
 Détails : [`docs/architecture.md`](docs/architecture.md) ·
@@ -93,13 +105,32 @@ git clone https://github.com/Tetrax/hub && cd hub
 cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID/GID…
 sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
 docker compose up -d --build
-curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.3.0",…}
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.0",…}
 ```
 
 Sur le VPS, `.env` porte `COMPOSE_FILE=compose.yaml:compose.vps.yaml` : les
 spécificités locales (sous-réseau fixé, proxy de confiance, hostname, socket du
 helper) viennent de la surcharge versionnée. Variantes (proxy d'entreprise,
 Portainer, hors ligne, restauration) : [`docs/operations.md`](docs/operations.md) §9–§12.
+
+### Déploiement standalone (Portainer — HTTPS direct, un conteneur)
+
+1. DNS : `hub.sns-security.lan` → IP de la VM (préparation réseau habituelle) ;
+2. Portainer → **Stacks** → **Add stack** → **Repository** :
+   - **Repository URL** : `https://github.com/Tetrax/hub`
+   - **Repository reference** : `refs/heads/main`
+   - **Compose path** : `compose.standalone.yaml`
+   - **Environment variables** : `HUB_HOSTNAME=hub.sns-security.lan`
+     (et, si besoin, `HUB_HTTPS_PORT=443`) ;
+3. **Deploy the stack** → attendre `healthy` ;
+4. ouvrir `https://hub.sns-security.lan` (accepter le certificat temporaire) ;
+5. créer le compte administrateur ;
+6. **Administration → Certificats** → importer le **PKCS#12** fourni par la DSI
+   (fichier + mot de passe) → *Valider et installer*.
+
+Aucun `ssh`, `sudo`, `mkdir`, `chown`, `systemctl`, `nginx`, `certbot` n'est
+nécessaire : les volumes Docker (`hub_data`, `hub_certs`) sont créés et
+initialisés automatiquement.
 
 Rollback : redéployer l'image du commit précédent
 (`HUB_IMAGE_TAG=<sha> docker compose up -d --no-build`), données persistantes
