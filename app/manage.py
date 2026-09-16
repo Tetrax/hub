@@ -18,7 +18,25 @@ import sys
 from pathlib import Path
 
 from . import auth, catalog
-from .urls import validate_app_url, validate_category, validate_status
+from .urls import slugify, validate_app_url, validate_category_name, validate_status
+
+
+def _category_id(connection, raw_name: str) -> tuple[int | None, str | None]:
+    """Identifiant de la catégorie du catalogue initial, créée si nécessaire.
+
+    Les catégories sont des entités en base depuis V1.1 : on résout par nom (slug),
+    et on crée la catégorie si elle n'existe pas encore.
+    """
+    name, error = validate_category_name(raw_name or "")
+    if error:
+        return None, error
+    existing = catalog.get_category_by_slug(connection, slugify(name))
+    if existing is not None:
+        return int(existing["id"]), None
+    row, error = catalog.create_category(connection, name)
+    if error or row is None:
+        return None, error or "Catégorie non créée."
+    return int(row["id"]), None
 
 
 def _seed(argument: str | None) -> int:
@@ -39,8 +57,8 @@ def _seed(argument: str | None) -> int:
         if error:
             print(f"Entrée ignorée ({entry.get('name')}) : {error}", file=sys.stderr)
             continue
-        category, error = validate_category(entry.get("category", "Autres"))
-        if error:
+        category_id, error = _category_id(connection, entry.get("category", "Autres"))
+        if error or category_id is None:
             print(f"Entrée ignorée ({entry.get('name')}) : {error}", file=sys.stderr)
             continue
         status, error = validate_status(entry.get("status", "production"))
@@ -54,7 +72,7 @@ def _seed(argument: str | None) -> int:
                 "name": entry.get("name", "").strip(),
                 "description": entry.get("description", "").strip(),
                 "url": url,
-                "category": category,
+                "category_id": category_id,
                 "status": status,
                 "position": entry.get("position"),
             },
