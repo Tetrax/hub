@@ -1,0 +1,42 @@
+[Unit]
+Description=Hub privileged certificate activation helper (SNS Hub)
+After=local-fs.target nginx.service
+Requires=nginx.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/hub-cert-helper
+EnvironmentFile=/etc/hub-cert-helper.env
+ExecStart=/usr/bin/python3 /opt/hub-cert-helper/scripts/hub_cert_helper.py serve
+Restart=on-failure
+RestartSec=2s
+UMask=0027
+RuntimeDirectory=hub-cert-helper
+RuntimeDirectoryMode=0750
+# Répertoires accessibles en écriture : uniquement ceux nécessaires au mécanisme.
+ReadWritePaths=/var/lib/hub/certificates /run/hub-cert-helper /run/nginx.pid /var/log/nginx
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+# AF_INET* : vérification du certificat réellement servi (openssl s_client sur 127.0.0.1).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_NET_BIND_SERVICE
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
