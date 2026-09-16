@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+runtime
+tests
+docs
+deploy
+scripts
+seeds/*.local.json
+*.md
+!app/**/*.md
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.env
+.env.*

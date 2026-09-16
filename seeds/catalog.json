@@ -1,0 +1,50 @@
+{
+  "_comment": "Catalogue initial SNS Hub — applications réellement déployées et pertinentes pour les collaborateurs (sources : configurations nginx et Compose du VPS). Les screenshots sont ajoutés via /admin. Ne pas inventer d'URL.",
+  "apps": [
+    {
+      "slug": "fortiupgrade",
+      "name": "FortiUpgrade",
+      "description": "Chemins de mise à niveau FortiOS enrichis : versions et builds, problèmes connus, vulnérabilités et alertes.",
+      "url": "https://fortiupgrade.valdev.me",
+      "category": "Fortinet",
+      "status": "production",
+      "position": 10
+    },
+    {
+      "slug": "fortiflow",
+      "name": "FortiFlow",
+      "description": "Analyse de logs FortiGate et préparation des politiques de segmentation réseau.",
+      "url": "https://fortiflow.valdev.me",
+      "category": "Fortinet",
+      "status": "production",
+      "position": 20
+    },
+    {
+      "slug": "fortiflow2",
+      "name": "FortiFlow2",
+      "description": "Analyseur de logs FortiGate : décisions de politique, prévisualisation et export.",
+      "url": "https://fortiflow2.valdev.me",
+      "category": "Fortinet",
+      "status": "production",
+      "position": 30
+    },
+    {
+      "slug": "fortianonymous",
+      "name": "FortiAnonymous",
+      "description": "Prépare localement une configuration FortiGate expurgée, partageable sans exposer de données sensibles.",
+      "url": "https://fortianonymous.valdev.me",
+      "category": "Sécurité",
+      "status": "production",
+      "position": 40
+    },
+    {
+      "slug": "vysion",
+      "name": "Vysion",
+      "description": "Audit de configurations FortiGate : contrôles structurés PASS/FAIL et rapports.",
+      "url": "https://vysion.valdev.me",
+      "category": "Fortinet",
+      "status": "production",
+      "position": 50
+    }
+  ]
+}

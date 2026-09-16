@@ -1,0 +1,62 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+{% set state_labels = {'valid': 'Valide', 'expiring': 'Expire bientôt', 'critical': 'Expire très bientôt', 'expired': 'Expiré'} %}
+
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Tableau de bord</h1>
+    <p class="admin-sub">Connecté en tant que {{ admin_username }}.</p>
+  </div>
+  <a class="button button-primary" href="{{ url_for('admin.app_new') }}">+ Ajouter une application</a>
+</div>
+
+<section class="panel">
+  <h2 class="panel-title">Catalogue</h2>
+  <div class="stat-grid">
+    <div class="stat">
+      <p class="stat-value">{{ stats.total }}</p>
+      <p class="stat-label">Applications au total</p>
+    </div>
+    <div class="stat">
+      <p class="stat-value">{{ stats.enabled }}</p>
+      <p class="stat-label">Affichées sur le portail</p>
+    </div>
+    <div class="stat">
+      <p class="stat-value">{{ stats.disabled }}</p>
+      <p class="stat-label">Masquées</p>
+    </div>
+  </div>
+  <div class="form-actions">
+    <a class="button" href="{{ url_for('admin.apps_list') }}">Gérer les applications</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Certificat HTTPS</h2>
+  {% if cert_error %}
+  <p class="notice notice-error">Helper certificat indisponible : {{ cert_error }}</p>
+  {% elif cert_status and cert_status['present'] and cert_status['certificate'] %}
+  {% set certificate = cert_status['certificate'] %}
+  <dl class="kv">
+    <dt>Domaine</dt><dd>{{ certificate['hostname'] }}</dd>
+    <dt>Sujet</dt><dd class="mono">{{ certificate['subject'] }}</dd>
+    <dt>Émetteur</dt><dd class="mono">{{ certificate['issuer'] }}</dd>
+    <dt>Expiration</dt>
+    <dd>{{ certificate['notAfter'] }}
+      <span class="state-pill state-{{ certificate['state'] }}">{{ state_labels.get(certificate['state'], certificate['state']) }}</span>
+      <span class="cell-muted">({{ certificate['daysRemaining'] }} jour(s) restant(s))</span>
+    </dd>
+  </dl>
+  {% if cert_status.get('servedMatches') is sameas false %}
+  <p class="notice notice-warn">
+    Le certificat servi par Nginx ne correspond pas (encore) à la paire gérée.
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="notice notice-warn">Aucun certificat géré pour le moment.</p>
+  {% endif %}
+  <div class="form-actions">
+    <a class="button" href="{{ url_for('cert.certificates') }}">Gérer le certificat</a>
+  </div>
+</section>
+{% endblock %}

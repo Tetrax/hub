@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Première configuration — Administration SNS Hub{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block header_nav %}{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <section class="auth-card">
+    <h1 class="auth-title">Première configuration</h1>
+    <p class="auth-sub">
+      Aucun compte administrateur n'existe encore. Créez-le maintenant :
+      aucun mot de passe par défaut n'est utilisé.
+    </p>
+    {% include "admin/_flashes.html" %}
+    <form method="post" action="{{ url_for('admin.setup') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <div class="form-field">
+        <label class="form-label" for="username">Identifiant</label>
+        <input class="input" id="username" name="username" value="{{ username }}"
+               autocomplete="username" required minlength="3" maxlength="64" autofocus>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="password">Mot de passe (12 octets minimum)</label>
+        <input class="input" id="password" name="password" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="confirmation">Confirmation</label>
+        <input class="input" id="confirmation" name="confirmation" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+      <div class="form-actions">
+        <button class="button button-primary" type="submit">Créer le compte</button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

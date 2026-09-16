@@ -1,0 +1,94 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Applications</h1>
+    <p class="admin-sub">Catalogue affiché sur le portail public.</p>
+  </div>
+  <a class="button button-primary" href="{{ url_for('admin.app_new') }}">+ Ajouter une application</a>
+</div>
+
+<section class="panel">
+  {% if apps %}
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th scope="col">Ordre</th>
+        <th scope="col">Application</th>
+        <th scope="col">Catégorie</th>
+        <th scope="col">Statut</th>
+        <th scope="col">Visibilité</th>
+        <th scope="col">Screenshot</th>
+        <th scope="col">Modifiée le</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for app in apps %}
+      <tr>
+        <td class="cell-muted">{{ app['position'] }}</td>
+        <td>
+          <strong>{{ app['name'] }}</strong><br>
+          <span class="cell-muted mono">{{ app['slug'] }}</span>
+        </td>
+        <td>{{ app['category'] }}</td>
+        <td>{{ statuses[app['status']] }}</td>
+        <td>
+          {% if app['enabled'] %}
+          <span class="state-pill state-valid">Affichée</span>
+          {% else %}
+          <span class="state-pill state-expired">Masquée</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if app['image'] %}
+          <img class="thumb" src="{{ url_for('public.uploaded_image', filename=app['image']) }}"
+               alt="Screenshot de {{ app['name'] }}">
+          {% else %}
+          <span class="thumb-empty">aucun</span>
+          {% endif %}
+        </td>
+        <td class="cell-muted">{{ app['updated_at'] }}</td>
+        <td>
+          <div class="row-actions">
+            <form method="post" action="{{ url_for('admin.app_move', app_id=app['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="direction" value="up">
+              <button class="button button-small button-ghost" type="submit"
+                      aria-label="Monter {{ app['name'] }}"
+                      {% if loop.first %}disabled{% endif %}>↑</button>
+            </form>
+            <form method="post" action="{{ url_for('admin.app_move', app_id=app['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="direction" value="down">
+              <button class="button button-small button-ghost" type="submit"
+                      aria-label="Descendre {{ app['name'] }}"
+                      {% if loop.last %}disabled{% endif %}>↓</button>
+            </form>
+            <a class="button button-small" href="{{ url_for('admin.app_edit', app_id=app['id']) }}">Modifier</a>
+            <form method="post" action="{{ url_for('admin.app_toggle', app_id=app['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <button class="button button-small" type="submit">
+                {% if app['enabled'] %}Masquer{% else %}Afficher{% endif %}
+              </button>
+            </form>
+            <form method="post" action="{{ url_for('admin.app_delete', app_id=app['id']) }}"
+                  data-confirm="Supprimer définitivement « {{ app['name'] }} » ?">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="confirm_delete" value="1">
+              <button class="button button-small button-danger" type="submit">Supprimer</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="panel-sub">Aucune application dans le catalogue.</p>
+  <div class="form-actions">
+    <a class="button button-primary" href="{{ url_for('admin.app_new') }}">+ Ajouter une application</a>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

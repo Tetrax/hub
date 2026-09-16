@@ -1,0 +1,119 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+{% set state_labels = {'valid': 'Valide', 'expiring': 'Expire bientôt', 'critical': 'Expire très bientôt', 'expired': 'Expiré'} %}
+
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Certificats</h1>
+    <p class="admin-sub">Certificat TLS servi par Nginx pour {{ tls_hostname or 'Hub' }}.</p>
+  </div>
+</div>
+
+{% if validation %}
+{% set summary = validation['summary'] %}
+<section class="panel">
+  <h2 class="panel-title">Paire validée — prête à être activée</h2>
+  <p class="notice notice-ok">
+    Toutes les vérifications ont réussi (format, dates, SAN, clé ↔ certificat, chaîne,
+    chargement TLS). L'activation bascule la paire, teste et recharge Nginx, vérifie le
+    certificat réellement servi — et restaure la paire précédente en cas d'échec.
+  </p>
+  <dl class="kv">
+    <dt>Sujet</dt><dd class="mono">{{ summary['subject'] }}</dd>
+    <dt>Émetteur</dt><dd class="mono">{{ summary['issuer'] }}</dd>
+    <dt>Domaines (SAN)</dt><dd class="mono">{{ summary['sans']|join(', ') }}</dd>
+    <dt>Validité</dt>
+    <dd>{{ summary['notBefore'] }} → {{ summary['notAfter'] }}
+      <span class="cell-muted">({{ summary['daysRemaining'] }} jour(s))</span>
+    </dd>
+    <dt>Empreinte SHA-256</dt><dd class="mono">{{ summary['fingerprintSha256'] }}</dd>
+    <dt>Certificats dans la chaîne</dt><dd>{{ summary['chainLength'] }}</dd>
+  </dl>
+  <p class="form-hint">Validation valable jusqu'à : {{ validation['expiresAt'] }} (usage unique).</p>
+  <form method="post" action="{{ url_for('cert.activate') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="ticket" value="{{ validation['ticket'] }}">
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Activer ce certificat</button>
+      <a class="button button-ghost" href="{{ url_for('cert.certificates') }}">Annuler</a>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2 class="panel-title">Certificat actif</h2>
+  {% if helper_error %}
+  <p class="notice notice-error">Helper certificat indisponible : {{ helper_error }}</p>
+  {% elif status and status['present'] and status['certificate'] %}
+  {% set certificate = status['certificate'] %}
+  <dl class="kv">
+    <dt>Domaine</dt><dd>{{ certificate['hostname'] }}</dd>
+    <dt>Sujet</dt><dd class="mono">{{ certificate['subject'] }}</dd>
+    <dt>Nom commun (CN)</dt><dd>{{ certificate['commonName'] or '—' }}</dd>
+    <dt>Domaines (SAN)</dt><dd class="mono">{{ certificate['sans']|join(', ') }}</dd>
+    <dt>Émetteur</dt><dd class="mono">{{ certificate['issuer'] }}</dd>
+    <dt>Début de validité</dt><dd>{{ certificate['notBefore'] }}</dd>
+    <dt>Expiration</dt><dd>{{ certificate['notAfter'] }}</dd>
+    <dt>Jours restants</dt>
+    <dd>{{ certificate['daysRemaining'] }}
+      <span class="state-pill state-{{ certificate['state'] }}">{{ state_labels.get(certificate['state'], certificate['state']) }}</span>
+    </dd>
+    <dt>Numéro de série</dt><dd class="mono">{{ certificate['serial'] }}</dd>
+    <dt>Empreinte SHA-256</dt><dd class="mono">{{ certificate['fingerprintSha256'] }}</dd>
+    <dt>Certificats dans la chaîne</dt><dd>{{ certificate['chainLength'] }}</dd>
+  </dl>
+  {% if status.get('servedMatches') is sameas false %}
+  <p class="notice notice-warn">
+    Le certificat réellement présenté par Nginx ne correspond pas à la paire gérée :
+    vérifiez la configuration Nginx avant de poursuivre.
+  </p>
+  {% elif status.get('servedMatches') %}
+  <p class="notice notice-ok">Le certificat servi par Nginx correspond à la paire gérée.</p>
+  {% endif %}
+  {% else %}
+  <p class="notice notice-warn">
+    Aucun certificat géré pour le moment. Utilisez le formulaire ci-dessous pour installer
+    la paire (PEM) délivrée pour {{ tls_hostname or 'ce domaine' }}.
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Remplacer le certificat</h2>
+  <p class="panel-sub">
+    Déroulé sécurisé : validation complète → sauvegarde de la paire active → bascule atomique →
+    <span class="mono">nginx -t</span> → rechargement → vérification du certificat servi →
+    rollback automatique en cas d'échec.
+  </p>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('cert.validate') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="certificate">Certificat (PEM, .crt/.pem)</label>
+        <input class="input" id="certificate" name="certificate" type="file"
+               accept=".pem,.crt,.cer" required>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="private_key">Clé privée (PEM, non chiffrée)</label>
+        <input class="input" id="private_key" name="private_key" type="file"
+               accept=".key,.pem" required>
+      </div>
+      <div class="form-field form-field-wide">
+        <label class="form-label" for="chain">Chaîne / intermédiaires (PEM, optionnel)</label>
+        <input class="input" id="chain" name="chain" type="file" accept=".pem,.crt,.cer">
+        <p class="form-hint">
+          Si le fichier certificat contient déjà la chaîne complète, laissez ce champ vide.
+        </p>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Valider la paire</button>
+    </div>
+  </form>
+  <p class="form-hint">
+    La clé privée n'est jamais affichée, téléchargeable, ni journalisée ; elle n'est jamais
+    transmise à l'application, uniquement au helper root qui l'installe.
+  </p>
+</section>
+{% endblock %}

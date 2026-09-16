@@ -1,0 +1,71 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Paramètres</h1>
+    <p class="admin-sub">Préférences du portail et compte administrateur.</p>
+  </div>
+</div>
+
+<section class="panel">
+  <h2 class="panel-title">Préférences du portail</h2>
+  <form method="post" action="{{ url_for('admin.settings_preferences') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label class="checkbox-row">
+      <input type="checkbox" name="open_links_new_tab" value="1"
+             {% if open_new_tab %}checked{% endif %}>
+      Ouvrir les applications dans un nouvel onglet
+    </label>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Compte administrateur</h2>
+  <dl class="kv">
+    <dt>Identifiant</dt>
+    <dd>{{ admin_info['username'] if admin_info else '—' }}</dd>
+    <dt>Mot de passe modifié le</dt>
+    <dd>{{ admin_info['password_changed_at'] if admin_info else '—' }}</dd>
+  </dl>
+  <form method="post" action="{{ url_for('admin.settings_password') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="current_password">Mot de passe actuel</label>
+        <input class="input" id="current_password" name="current_password"
+               type="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-field"></div>
+      <div class="form-field">
+        <label class="form-label" for="new_password">Nouveau mot de passe (12 octets min.)</label>
+        <input class="input" id="new_password" name="new_password"
+               type="password" autocomplete="new-password" required minlength="12">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="confirmation">Confirmation</label>
+        <input class="input" id="confirmation" name="confirmation"
+               type="password" autocomplete="new-password" required minlength="12">
+      </div>
+    </div>
+    <p class="form-hint">La modification invalide toutes les sessions actives : vous serez reconnecté.</p>
+    <div class="form-actions">
+      <button class="button" type="submit">Changer le mot de passe</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Informations</h2>
+  <dl class="kv">
+    <dt>Version</dt>
+    <dd>SNS Hub v{{ hub_version }}</dd>
+    <dt>Commit déployé</dt>
+    <dd class="mono">{{ hub_git_sha or 'inconnu (build local)' }}</dd>
+    <dt>Dépôt</dt>
+    <dd><a class="nav-link" href="{{ project_url }}" rel="noopener noreferrer">{{ project_url }}</a></dd>
+  </dl>
+</section>
+{% endblock %}

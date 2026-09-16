@@ -1,0 +1,63 @@
+# SNS Hub — Compose canonique (versionné, source de vérité du déploiement).
+#
+# Build : contexte = racine du dépôt (`scripts/build.sh`). L'image est taguée
+# avec le SHA Git ; HUB_IMAGE_TAG permet de déployer une image précise.
+# Données persistantes : ./runtime/data (bind mount, ignoré par Git).
+# Certificats : /var/lib/hub/certificates (hors conteneur, géré par le helper root).
+name: hub
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HUB_GIT_SHA: "${HUB_GIT_SHA:-unknown}"
+    image: "hub:${HUB_IMAGE_TAG:-local}"
+    container_name: hub-web
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      # Exposé uniquement en loopback ; Nginx reverse-proxy est le seul point d'entrée.
+      - "127.0.0.1:13744:8000"
+    environment:
+      HUB_DATA_DIR: /data
+      HUB_TLS_HOSTNAME: hub.valdev.me
+      HUB_CERT_HELPER_SOCKET: /run/hub-cert-helper/helper.sock
+      # Seul le proxy Nginx (gateway du réseau Docker de ce projet) est de confiance.
+      HUB_TRUSTED_PROXY_CIDRS: 172.31.244.1/32
+      HUB_SESSION_TTL_SECONDS: "43200"
+      HUB_GIT_SHA: "${HUB_GIT_SHA:-unknown}"
+    volumes:
+      - type: bind
+        source: ./runtime/data
+        target: /data
+      - type: bind
+        source: /run/hub-cert-helper
+        target: /run/hub-cert-helper
+        read_only: true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  default:
+    name: hub_default
+    ipam:
+      config:
+        # Sous-réseau fixé pour que l'adresse du proxy (gateway) soit déterministe.
+        - subnet: 172.31.244.0/24

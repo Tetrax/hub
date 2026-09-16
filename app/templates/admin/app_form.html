@@ -1,0 +1,90 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">{{ "Modifier « " + app['name'] + " »" if app else "Nouvelle application" }}</h1>
+    <p class="admin-sub">Les applications masquées disparaissent du portail sans être supprimées.</p>
+  </div>
+  <a class="button button-ghost" href="{{ url_for('admin.apps_list') }}">Retour à la liste</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="panel"
+      action="{{ url_for('admin.app_edit', app_id=app['id']) if app else url_for('admin.app_new') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <div class="form-grid">
+    <div class="form-field">
+      <label class="form-label" for="name">Nom</label>
+      <input class="input" id="name" name="name" value="{{ values.name }}"
+             required maxlength="80" autofocus>
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="slug">Slug</label>
+      <input class="input" id="slug" name="slug" value="{{ values.slug }}"
+             maxlength="64" placeholder="généré depuis le nom">
+      <p class="form-hint">Identifiant unique (minuscules, chiffres, tirets).</p>
+    </div>
+    <div class="form-field form-field-wide">
+      <label class="form-label" for="url">URL de l'application</label>
+      <input class="input" id="url" name="url" type="url" value="{{ values.url }}"
+             required placeholder="https://…">
+      <p class="form-hint">Le Hub ouvre l'application ; il ne la proxyfie pas.</p>
+    </div>
+    <div class="form-field form-field-wide">
+      <label class="form-label" for="description">Description courte</label>
+      <textarea class="textarea" id="description" name="description"
+                maxlength="400">{{ values.description }}</textarea>
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="category">Catégorie</label>
+      <input class="input" id="category" name="category" value="{{ values.category }}"
+             list="category-list" maxlength="40">
+      <datalist id="category-list">
+        {% for category in categories %}<option value="{{ category }}"></option>{% endfor %}
+      </datalist>
+    </div>
+    <div class="form-field">
+      <label class="form-label" for="status">Statut</label>
+      <select class="select" id="status" name="status">
+        {% for key, label in statuses.items() %}
+        <option value="{{ key }}" {% if values.status == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-field form-field-wide">
+      <label class="form-label" for="image">Screenshot (PNG, JPEG ou WebP — 4 Mo maximum)</label>
+      <input class="input" id="image" name="image" type="file"
+             accept="image/png,image/jpeg,image/webp">
+      {% if app and app['image'] %}
+      <div class="thumb-row">
+        <img class="thumb" src="{{ url_for('public.uploaded_image', filename=app['image']) }}"
+             alt="Screenshot actuel de {{ app['name'] }}">
+        <label class="checkbox-row">
+          <input type="checkbox" name="remove_image" value="1"
+                 {% if remove_image_requested %}checked{% endif %}>
+          Supprimer le screenshot actuel
+        </label>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="form-actions">
+    <button class="button button-primary" type="submit">
+      {{ "Enregistrer les modifications" if app else "Créer l'application" }}
+    </button>
+    <a class="button button-ghost" href="{{ url_for('admin.apps_list') }}">Annuler</a>
+  </div>
+</form>
+
+{% if app %}
+<section class="panel">
+  <h2 class="panel-title">Suppression</h2>
+  <p class="panel-sub">La suppression retire l'application du catalogue et efface son screenshot.</p>
+  <form method="post" action="{{ url_for('admin.app_delete', app_id=app['id']) }}"
+        data-confirm="Supprimer définitivement « {{ app['name'] }} » ?">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <input type="hidden" name="confirm_delete" value="1">
+    <button class="button button-danger" type="submit">Supprimer cette application</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

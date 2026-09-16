@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Connexion — Administration SNS Hub{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block header_nav %}{% endblock %}
+
+{% block content %}
+<div class="auth-shell">
+  <section class="auth-card">
+    <h1 class="auth-title">Administration</h1>
+    <p class="auth-sub">SNS Hub — accès réservé.</p>
+    {% include "admin/_flashes.html" %}
+    <form method="post" action="{{ url_for('admin.login') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf }}">
+      <div class="form-field">
+        <label class="form-label" for="username">Identifiant</label>
+        <input class="input" id="username" name="username" autocomplete="username"
+               required maxlength="64" autofocus>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="password">Mot de passe</label>
+        <input class="input" id="password" name="password" type="password"
+               autocomplete="current-password" required>
+      </div>
+      <div class="form-actions">
+        <button class="button button-primary" type="submit">Se connecter</button>
+      </div>
+    </form>
+  </section>
+</div>
+{% endblock %}

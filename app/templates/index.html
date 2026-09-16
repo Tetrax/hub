@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}SNS Hub — Tous vos outils. Un seul accès.{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div class="hero-text">
+    <p class="hero-kicker">SNS Security</p>
+    <h1 class="hero-title">Tous vos outils.<br><span class="hero-accent">Un seul accès.</span></h1>
+    <p class="hero-sub">Les applications internes SNS, réunies sur un seul portail.</p>
+  </div>
+</section>
+
+<div class="toolbar">
+  <div class="chips" role="group" aria-label="Filtrer par catégorie">
+    <a class="chip{% if not active_category %} chip-active{% endif %}"
+       data-category-chip data-category=""
+       href="{{ url_for('public.index', q=query or none) }}">Toutes</a>
+    {% for category in categories %}
+    <a class="chip{% if active_category == category %} chip-active{% endif %}"
+       data-category-chip data-category="{{ category }}"
+       href="{{ url_for('public.index', category=category, q=query or none) }}">{{ category }}</a>
+    {% endfor %}
+  </div>
+  <form class="search" method="get" action="{{ url_for('public.index') }}" role="search">
+    {% if active_category %}<input type="hidden" name="category" value="{{ active_category }}">{% endif %}
+    <label class="visually-hidden" for="search-input">Rechercher une application</label>
+    <input id="search-input" class="search-input" type="search" name="q" value="{{ query }}"
+           placeholder="Rechercher un outil…" autocomplete="off" data-filter="search">
+  </form>
+</div>
+
+<p class="result-count" data-result-count role="status" aria-live="polite">
+  {{ apps|length }} application{{ 's' if apps|length != 1 else '' }} affichée{{ 's' if apps|length != 1 else '' }}
+</p>
+
+<section class="grid" aria-label="Applications SNS">
+  {% for app in apps %}
+  <article class="card" data-card
+           data-name="{{ app['name']|lower }}" data-description="{{ app['description']|lower }}"
+           data-category="{{ app['category'] }}">
+    <a class="card-link" href="{{ app['url'] }}"
+       {% if open_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}
+       aria-label="Ouvrir {{ app['name'] }}{% if open_new_tab %} (nouvel onglet){% endif %}">
+      <div class="card-media">
+        {% if app['image'] %}
+        <img src="{{ url_for('public.uploaded_image', filename=app['image']) }}"
+             alt="Aperçu de l'application {{ app['name'] }}" width="1440" height="900" loading="lazy">
+        {% else %}
+        <span class="card-fallback" aria-hidden="true">{{ app['name'][:2]|upper }}</span>
+        {% endif %}
+        <span class="badge badge-{{ app['status'] }}">{{ statuses[app['status']] }}</span>
+      </div>
+      <div class="card-body">
+        <p class="card-category">{{ app['category'] }}</p>
+        <h2 class="card-title">{{ app['name'] }}</h2>
+        {% if app['description'] %}<p class="card-desc">{{ app['description'] }}</p>{% endif %}
+        <span class="card-cta">Ouvrir l'application <span aria-hidden="true">→</span></span>
+      </div>
+    </a>
+  </article>
+  {% endfor %}
+</section>
+
+<div class="empty" data-empty-state {% if apps %}hidden{% endif %}>
+  <p class="empty-title">Aucun outil ne correspond.</p>
+  <p class="empty-sub">Modifiez la recherche ou <a href="{{ url_for('public.index') }}">affichez tout le catalogue</a>.</p>
+</div>
+{% endblock %}
