@@ -18,6 +18,10 @@ RestartSec=2s
 UMask=0027
 RuntimeDirectory=hub-cert-helper
 RuntimeDirectoryMode=0750
+# Le répertoire de socket survit aux redémarrages du helper : un conteneur
+# démarré avant ne garde pas un montage orphelin (sinon l'application perd la
+# socket après chaque mise à jour du helper — il faut alors recréer le conteneur).
+RuntimeDirectoryPreserve=yes
 # Répertoires accessibles en écriture : uniquement ceux nécessaires au mécanisme.
 # Le préfixe « - » rend les chemins Nginx optionnels (absent = ignoré, sans échec).
 ReadWritePaths=/var/lib/hub/certificates /run/hub-cert-helper -/run/nginx.pid -/var/log/nginx

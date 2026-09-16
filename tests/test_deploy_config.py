@@ -219,6 +219,10 @@ def test_systemd_unit_keeps_hardening():
         "MemoryDenyWriteExecute=true",
         "CapabilityBoundingSet=",
         "RuntimeDirectory=hub-cert-helper",
+        # Le répertoire de socket survit aux redémarrages : sans cela, un
+        # conteneur démarré avant garde un montage orphelin et l'application
+        # perd la socket après chaque mise à jour du helper.
+        "RuntimeDirectoryPreserve=yes",
         "ReadWritePaths=/var/lib/hub/certificates /run/hub-cert-helper",
     ):
         assert guard in content, f"protection systemd perdue : {guard}"

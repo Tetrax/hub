@@ -214,6 +214,20 @@ sudo systemctl restart hub-cert-helper
 sudo systemctl status hub-cert-helper --no-pager
 ```
 
+### Mise à jour du helper
+
+```bash
+sudo scripts/install-helper.sh        # unité + env + hook (Certbot optionnel)
+sudo systemctl restart hub-cert-helper
+docker compose exec web ls -l /run/hub-cert-helper/   # le conteneur doit voir la socket
+```
+
+L'unité conserve le répertoire de socket entre deux redémarrages
+(`RuntimeDirectoryPreserve=yes`) : un simple redémarrage du helper n'invalide
+donc plus le montage du conteneur. Si le répertoire a été **recréé** (redémarrage
+de l'hôte, ou `/run` nettoyé), recréer le conteneur :
+`docker compose up -d --force-recreate --no-build web`.
+
 ### Renouvellement Let's Encrypt
 
 Automatique (`certbot.timer` + hook `/etc/letsencrypt/renewal-hooks/deploy/hub`).
@@ -404,6 +418,7 @@ manuel, ou certificat géré par le proxy).
 | `hub-web` unhealthy (autre cause) | `docker compose logs web` ; vérifier que `HUB_DATA_PATH` existe et que le disque n'est pas plein |
 | `docker compose config` : « Pool overlaps » | un sous-réseau fixé entre en conflit avec le SI : ne pas charger `compose.vps.yaml` (générique = réseau Docker automatique) |
 | Page admin : « Helper certificat indisponible » | normal sans helper (VM générique, TLS par un proxy) ; sinon `systemctl status hub-cert-helper`, socket `/run/hub-cert-helper/helper.sock`, env `/etc/hub-cert-helper.env` |
+| « Helper certificat indisponible » **juste après une mise à jour du helper** | le montage du conteneur est périmé si le répertoire de socket a été recréé : `docker compose up -d --force-recreate --no-build web` (un simple `systemctl restart` ne le provoque plus, voir §7) |
 | Helper qui refuse de démarrer | `journalctl -u hub-cert-helper -n 50` ; sans Nginx local : `HUB_CERT_RELOAD_NGINX=0` requis |
 | Cookie de session non `Secure` / pas de HSTS derrière un proxy | `HUB_TRUSTED_PROXY_CIDRS` ne contient pas l'IP **source** du proxy (les `X-Forwarded-*` sont ignorés par conception) |
 | Activation refusée : « validation … » | le message du helper est affiché tel quel (dates, SAN, clé, chaîne) — corriger la paire fournie |
