@@ -1,6 +1,11 @@
-# Dépendances de développement (tests locaux).
+# Dépendances de développement (tests locaux, recette navigateur, outils).
 -r requirements.txt
 iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0
 pytest==9.1.1
+
+# Recette navigateur réelle (tests/browser/) et conversions d'images.
+# Sur un poste neuf : `playwright install chromium`.
+playwright==1.63.0
+pillow==12.3.0

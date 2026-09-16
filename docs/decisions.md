@@ -185,3 +185,45 @@ check, pas de SSRF) ; les URLs sont validées (http/https uniquement, pas de
 L'état des applications est un simple champ `status` éditorial.
 
 **Conséquences.** Pas de monitoring ni de disponibilité temps réel — volontaire.
+
+---
+
+## D9 — Loopback autorisé dans le vhost Hub (vérifiabilité locale)
+
+**Contexte.** L'allowlist IP globale du VPS (`conf.d/00-application-access.conf`)
+protège tous les domaines ; depuis le VPS lui-même, une requête vers
+`https://hub.valdev.me` est donc refusée (403) — ce qui rend impossible toute
+recette de production de bout en bout (TLS + vhost + application) depuis l'hôte,
+alors que le brief exige une vérification réelle après déploiement.
+
+**Décision.** Le vhost Hub évalue `allow 127.0.0.1; allow ::1;` **puis inclut le
+fichier d'allowlist global** (`include /etc/nginx/conf.d/00-application-access.conf`).
+La liste des IP autorisées reste définie dans un seul fichier (aucune copie,
+aucune dérive) ; l'ouverture loopback n'expose rien de nouveau (un processus
+local peut déjà joindre directement le port applicatif publié en loopback).
+
+**Alternatives.** Recopier la liste dans le vhost : duplication et risque de
+divergence à chaque changement d'IP. Ajouter une location de diagnostic : ne
+teste pas le chemin réel. Ne rien faire : recette limitée à l'application,
+sans preuve du chemin HTTPS réel.
+
+**Conséquences.** Les vérifications d'exploitation sur le VPS empruntent le
+chemin HTTPS réel ; le comportement 403 reste inchangé pour toute source non
+autorisée.
+
+---
+
+## D10 — Screenshots servis en WebP
+
+**Contexte.** Les captures réelles (1440×900) pèsent ~150–220 Ko en PNG ; les
+cinq cartes de la landing représentaient ~870 Ko, l'essentiel du poids de page.
+
+**Décision.** Les captures sont converties en WebP (qualité 82) avant
+téléversement ; l'application accepte et sert PNG, JPEG et WebP indifféremment
+(validation par magic bytes). Aucun traitement d'image côté serveur.
+
+**Pourquoi.** ~70 % de poids en moins (358 Ko de page au total) sans perte
+visible ; aucun coût serveur ni dépendance d'image en production.
+
+**Conséquences.** Le catalogue stocke des `.webp` ; un PNG/JPEG reste accepté à
+tout moment via l'admin.

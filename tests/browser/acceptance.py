@@ -34,11 +34,11 @@ ADMIN_PASSWORD = os.environ.get("HUB_ADMIN_PASSWORD", "")
 
 # Applications du catalogue initial : id en base → capture réelle.
 APP_SCREENSHOTS = {
-    1: "fortiupgrade.png",
-    2: "fortiflow.png",
-    3: "fortiflow2.png",
-    4: "fortianonymous.png",
-    5: "vysion.png",
+    1: "fortiupgrade.webp",
+    2: "fortiflow.webp",
+    3: "fortiflow2.webp",
+    4: "fortianonymous.webp",
+    5: "vysion.webp",
 }
 
 results: list[tuple[str, bool, str]] = []
