@@ -353,6 +353,49 @@ def main() -> int:
                     "Admin : certificat servi vérifié",
                     "correspond à la paire gérée" in cert_content or "Jours restants" in cert_content,
                 )
+            # V1.2 : deux méthodes d'import, sélecteur sans JavaScript
+            check(
+                "Certificats : deux méthodes d'import proposées",
+                "PKCS#12 / PFX" in cert_content
+                and "PEM / CRT" in cert_content
+                and page.locator("#panel-pkcs12 form").count() == 1
+                and page.locator("#panel-pem form").count() == 1,
+            )
+            check(
+                "Certificats : PKCS#12 proposé par défaut",
+                page.locator("#panel-pkcs12").is_visible()
+                and not page.locator("#panel-pem").is_visible(),
+            )
+            check(
+                "Certificats : mot de passe optionnel et masqué",
+                page.eval_on_selector(
+                    "#pfx_password",
+                    "el => el.type === 'password' && el.autocomplete === 'off' && !el.required",
+                ),
+            )
+            check(
+                "Certificats : fichier PKCS#12 attendu (.p12/.pfx)",
+                page.eval_on_selector(
+                    "#bundle", "el => el.required && el.accept.includes('.p12') && el.accept.includes('.pfx')"
+                ),
+            )
+            page.click('label[for="method-pem"]')
+            page.wait_for_timeout(150)
+            check(
+                "Certificats : bascule vers la méthode PEM (sans JavaScript)",
+                page.locator("#panel-pem").is_visible()
+                and not page.locator("#panel-pkcs12").is_visible(),
+            )
+            check("Certificats : limite de taille annoncée", "256 Ko maximum" in cert_content)
+            # Accessibilité : le sélecteur est utilisable au clavier (radio + Espace)
+            page.focus("#method-pkcs12")
+            page.keyboard.press("Space")
+            page.wait_for_timeout(150)
+            check(
+                "Certificats : sélecteur pilotable au clavier",
+                page.locator("#panel-pkcs12").is_visible()
+                and not page.locator("#panel-pem").is_visible(),
+            )
             page.screenshot(path=str(SHOTS_DIR / "hub-admin-certificates-dark.png"))
 
             # --- Catégories : création, doublon, renommage, suppression --------
