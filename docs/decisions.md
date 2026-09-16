@@ -407,7 +407,7 @@ durcissement :
   Nginx est absent (`HUB_CERT_RELOAD_NGINX=0` requis), échec explicite si
   systemd manque ;
 - côté application : **rien à changer** — sans socket, `/admin/certificats`
-  affiche « Helper indisponible » (HTTP 200), refuse proprement les imports, et
+  affiche « Gestion des certificats indisponible » (HTTP 200), refuse proprement les imports, et
   indique que le TLS est peut-être géré par l'infrastructure externe.
 
 **Conséquences.** Trois profils d'exploitation cohérents, sans code applicatif

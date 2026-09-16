@@ -101,7 +101,8 @@ JAR="$ROOT/cookies.txt"
 
 check_eq "healthz = 200" "200" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$BASE_URL/healthz")"
 HZ="$("${CURL[@]}" "$BASE_URL/healthz")"
-check_contains "healthz : version 1.3.0" "1.3.0" "$HZ"
+EXPECTED_VERSION=$(grep -m1 '^__version__' app/__init__.py | cut -d'"' -f2)
+check_contains "healthz : version $EXPECTED_VERSION" "$EXPECTED_VERSION" "$HZ"
 LANDING="$("${CURL[@]}" "$BASE_URL/")"
 check_eq "landing = 200" "200" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$BASE_URL/")"
 check_contains "landing : contenu rendu" "SNS" "$LANDING"
@@ -120,7 +121,7 @@ for path in /admin/apps /admin/categories /admin/settings /admin/certificates; d
 done
 
 CERT_PAGE="$("${CURL[@]}" -b "$JAR" "$BASE_URL/admin/certificates")"
-check_contains "page certificats : helper indisponible signalé" "Helper indisponible" "$CERT_PAGE"
+check_contains "page certificats : indisponibilité signalée" "indisponible" "$CERT_PAGE"
 check_contains "page certificats : méthode PKCS#12 proposée" "method-pkcs12" "$CERT_PAGE"
 
 # CRUD : nouvelle catégorie (création rapide — formulaire, comme le JS), puis application + capture.

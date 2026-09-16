@@ -231,7 +231,7 @@ openssl s_client -connect 127.0.0.1:443 -servername hub.valdev.me </dev/null 2>/
 ### Sans helper (VM sans Nginx, TLS géré ailleurs)
 
 Le helper est **optionnel** : sans lui, la page `/admin/certificats` affiche
-« Helper indisponible » et refuse proprement les imports ; tout le reste du Hub
+« Gestion des certificats indisponible » et refuse proprement les imports ; tout le reste du Hub
 fonctionne. Rien à configurer — ne pas installer le helper suffit.
 
 ### Helper sans Nginx
@@ -333,7 +333,7 @@ cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID
 sudo scripts/prepare-data-dir.sh        # crée runtime/data au bon propriétaire
 docker compose up -d --build            # ou HUB_IMAGE_TAG=<sha> … --no-build
 docker compose ps                       # attendre « healthy »
-curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.3.0",…}
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.0",…}
 ```
 
 Ensuite :
