@@ -25,7 +25,8 @@ COPY seeds ./seeds
 # au moment de l'installation (deploy/install-helper.sh) : une seule source.
 
 # Le conteneur tourne en lecture seule (compose) ; seuls /data et /tmp sont inscriptibles.
-RUN mkdir -p /data/uploads
+# Les sources doivent rester lisibles par l'utilisateur applicatif (uid 1000).
+RUN mkdir -p /data/uploads && chmod -R a+rX /opt/hub/app /opt/hub/seeds
 
 EXPOSE 8000
 USER 1000:1000
