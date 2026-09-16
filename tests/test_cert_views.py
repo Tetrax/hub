@@ -86,7 +86,8 @@ def test_validate_then_activate_full_flow(cert_app, helper):
     assert response.status_code == 200
     page = response.get_data(as_text=True)
     assert "Certificat activé" in page
-    assert "Nginx a été testé" in page
+    assert "Nginx a été rechargé" in page
+    assert "certificat servi a été vérifié" in page
     assert (helper["output"] / "fullchain.pem").read_bytes() == certificate
     assert helper["nginx"].calls[:3] == ["test_config", "test_config", "reload"]
 

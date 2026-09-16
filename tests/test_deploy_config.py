@@ -298,9 +298,36 @@ def test_offline_image_scripts_are_trivial_and_present():
 # --- Version applicative -----------------------------------------------------
 
 
-def test_version_is_thirteen(client):
+def test_version_is_current(client):
+    """La version applicative est bumpée à chaque livraison (V1.4 : portabilité standalone)."""
     from app import __version__
 
-    assert __version__ == "1.3.0"
+    assert __version__ == "1.4.0"
     body = client.get("/healthz").get_json()
-    assert body["version"] == "1.3.0"
+    assert body["version"] == "1.4.0"
+
+
+# --- Durcissement du conteneur applicatif (V1.4) ------------------------------
+
+
+def test_gunicorn_control_socket_is_disabled():
+    """gunicorn 26 ouvre une socket de contrôle : impossible en lecture seule, inutile ici."""
+    assert "control_socket_disable = True" in read("app/gunicorn.conf.py")
+
+
+def test_application_image_embeds_the_shared_certificate_module():
+    """Le backend standalone réutilise hub_certctl : une seule implémentation."""
+    dockerfile = read("Dockerfile")
+    assert "COPY helper/hub_certctl.py ./hub_certctl.py" in dockerfile
+    assert "openssl" in dockerfile
+    # L'utilisateur applicatif doit posséder /data et /certs : un volume nommé est
+    # initialisé depuis l'image, donc sans commande d'initialisation sur l'hôte.
+    assert "chown 1000:1000 /data /data/uploads /certs" in dockerfile
+
+
+def test_entrypoint_covers_both_deployments():
+    """Un seul entrypoint : transparent en HTTP, amorçage TLS en standalone."""
+    dockerfile = read("Dockerfile")
+    assert 'ENTRYPOINT ["/opt/hub/app/standalone/entrypoint.sh"]' in dockerfile
+    entrypoint = read("app/standalone/entrypoint.sh")
+    assert "bootstrap" in entrypoint and 'exec "$@"' in entrypoint

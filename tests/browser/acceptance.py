@@ -14,6 +14,11 @@ Variables :
     HUB_SCOPE             `full` (défaut) ou `public` (sans administration)
     HUB_SCREENSHOTS_DIR   dossier de captures d'applications à téléverser (optionnel)
     HUB_SKIP_CERT         `1` : ignores les vérifications du certificat (instance locale)
+                          et accepte un certificat non vérifiable par le navigateur
+                          (certificat de bootstrap d'un déploiement standalone)
+    HUB_HOST_RESOLVER     règle de résolution Chromium (ex.
+                          « MAP hub.intra.example 127.0.0.1 ») pour tester un
+                          déploiement standalone sans toucher /etc/hosts
     HUB_SHOTS_DIR         dossier de sortie des captures de validation
                           (par défaut /tmp/hub-acceptance)
 
@@ -36,6 +41,7 @@ ADMIN_USER = os.environ.get("HUB_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("HUB_ADMIN_PASSWORD", "")
 SCOPE = os.environ.get("HUB_SCOPE", "full").strip().lower()
 SKIP_CERT = os.environ.get("HUB_SKIP_CERT", "").strip() == "1"
+HOST_RESOLVER = os.environ.get("HUB_HOST_RESOLVER", "").strip()
 
 # Applications du catalogue initial : id en base → capture réelle.
 APP_SCREENSHOTS = {
@@ -109,7 +115,16 @@ def main() -> int:
     created_admin = False
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch()
+        launch_args = []
+        if SKIP_CERT:
+            # Instance locale ou certificat de bootstrap : le navigateur doit accepter
+            # un certificat qu'il ne peut pas valider (vérifications de contenu inchangées).
+            launch_args.append("--ignore-certificate-errors")
+        if HOST_RESOLVER:
+            # Le déploiement standalone sert le domaine demandé : la recette s'exécute
+            # sans modifier /etc/hosts de la machine.
+            launch_args.append(f"--host-resolver-rules={HOST_RESOLVER}")
+        browser = playwright.chromium.launch(args=launch_args)
         desktop = browser.new_context(
             viewport={"width": 1440, "height": 900}, locale="fr-FR", color_scheme="dark"
         )

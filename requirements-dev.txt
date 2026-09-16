@@ -9,3 +9,5 @@ pytest==9.1.1
 # Sur un poste neuf : `playwright install chromium`.
 playwright==1.63.0
 pillow==12.3.0
+# Lecture des fichiers Compose rendus dans les tests de déploiement (V1.4).
+pyyaml==6.0.2
