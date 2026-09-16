@@ -10,6 +10,8 @@ Statut : **V1.1 déployée en production — recette passée, aucune action ouve
 
 ## Version et périmètre
 
+- **V1.2** : import de certificats PKCS#12 / PFX (et PEM/DER) sur la page
+  Certificats, sans changement du pipeline helper (voir D13).
 - **V1.1** : catégories administrables + thème clair/sombre (voir D11, D12).
 - V1 : landing catalogue, administration complète, gestion du certificat TLS,
   sauvegarde/restauration, recette navigateur.
@@ -52,6 +54,15 @@ HUB_BASE_URL=http://127.0.0.1:13744 HUB_SCOPE=public .venv/bin/python tests/brow
   sessions serveur, CSRF, verrouillage après échecs.
 - **Migration de base** : schéma en `user_version = 2` (migration V1.1 appliquée
   en production le 2026-09-16, sauvegarde préalable conservée).
+
+### Certificat TLS en production (V1.2)
+
+- Paire active : Let's Encrypt `CN=hub.valdev.me`, expire le **2026-12-15**,
+  empreinte SHA-256 `36:86:21:E8:CB:3F:D2:B0:CD:0B:FB:7E:D1:D1:3E:78:C1:CC:0D:15:B4:B0:97:6B:25:52:AE:46:00:A1:AD:31`,
+  génération `.active-66ae25f978498c87`, `servedMatches = true`.
+- Imports : deux méthodes (`PKCS#12 / PFX` par défaut, `PEM / CRT — avancé`) ;
+  aucun certificat de test n'a remplacé la paire de production (voir D13 et
+  `docs/operations.md` §7 pour la limite des 256 Ko et l'interaction Certbot).
 
 ## Reprise après incident
 

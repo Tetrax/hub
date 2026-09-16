@@ -33,6 +33,11 @@ aucune requête vers elles.
 - Gestion du certificat TLS : état complet de la paire active et remplacement
   en deux temps (valider puis activer) avec bascule atomique, `nginx -t`,
   rechargement, vérification du certificat réellement servi et rollback.
+- Import de certificats (V1.2) : **PKCS#12 / PFX** (`.p12`, `.pfx`, mot de passe
+  optionnel) lu en mémoire par l'application — un seul fichier à fournir, la
+  chaîne et le certificat feuille sont extraits automatiquement (racine omise),
+  le secret n'est jamais conservé ; mode **PEM / CRT avancé** conservé, avec
+  détection réelle **DER**. Même pipeline de validation/activation que la V1.
 
 ## Architecture
 

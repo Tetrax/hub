@@ -293,3 +293,47 @@ elle diffère) ; les deux blocs clairs doivent rester identiques (vérifié par 
 test). Les captures d'écran des applications ne sont pas retouchées : seuls leurs
 conteneurs et liserés s'adaptent au thème. `prefers-reduced-motion` reste
 respecté.
+
+---
+
+## D13 — Import de certificats : PKCS#12/PFX lu par l'application, pipeline helper inchangé (V1.2)
+
+**Contexte.** L'administrateur devait fournir certificat, clé et chaîne
+séparément. Les autorités de certification délivrent très souvent un unique
+bundle PKCS#12 (.p12/.pfx) protégé par mot de passe. Il fallait l'accepter sans
+affaiblir le modèle de sécurité existant (helper root durci, socket vérifiée par
+`SO_PEERCRED`, activation atomique, rollback).
+
+**Décision.** L'application **extrait** le bundle en mémoire (`app/certparse.py`,
+bibliothèque `cryptography` — aucun parseur PKCS#12 maison, aucun sous-process
+OpenSSL, donc aucun mot de passe en ligne de commande), puis transmet la paire
+PEM obtenue au helper **exactement comme aujourd'hui** : le protocole, les
+contrôles `SO_PEERCRED` et le pipeline de validation/activation ne changent pas
+d'un octet. Deux méthodes d'import cohabitent dans l'interface, PKCS#12 proposé
+par défaut, sélecteur fonctionnel sans JavaScript.
+
+Règles retenues :
+
+- **certificat feuille** = celui qui correspond à la clé privée (jamais « le
+  premier certificat ») ; **chaîne** reconstruite par relations émetteur/sujet,
+  **racine auto-signée omise** (inutile en service, et c'est le helper qui
+  valide la chaîne) ;
+- **mot de passe** : secret éphémère, utilisé le temps de l'extraction
+  (mémoire seule, aucun fichier temporaire), jamais journalisé, jamais stocké,
+  jamais transmis au helper ; un mot de passe saisi pour un bundle non protégé
+  ne bloque pas (nouvel essai sans mot de passe) ;
+- **formats** : `.p12`/`.pfx` ; mode avancé PEM inchangé, complété par la
+  détection **DER** (contenu réel, jamais l'extension) pour le certificat et la
+  clé ;
+- **limite dédiée** : 256 Ko par bundle (un PFX réel pèse quelques kilo-octets),
+  et 16 certificats maximum dans un bundle.
+
+**Hors périmètre (assumé).** PKCS#7 (.p7b/.p7c), Java KeyStore, magasins Windows
+et conversions de formats rares : aucun bénéfice justifiant la complexité
+supplémentaire (PKCS#12 couvre le cas réel, PEM/DER couvre le reste).
+
+**Conséquences.** Un certificat importé (PKCS#12 ou PEM) reste actif jusqu'au
+prochain renouvellement Let's Encrypt — informé dans l'interface et documenté
+dans `docs/operations.md`. Le mode PEM existant n'est pas modifié
+(non-régression testée), et l'interface indique clairement la méthode, la limite
+de taille et le traitement du secret.

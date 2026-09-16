@@ -122,6 +122,31 @@ print(c.execute('PRAGMA user_version').fetchone()); print(c.execute('SELECT name
 
 ## 7. Certificat TLS
 
+### Importer un certificat (deux méthodes)
+
+`/admin/certificats` → « Importer un certificat » :
+
+- **PKCS#12 / PFX (recommandé)** : un seul fichier `.p12`/`.pfx`, avec son mot de
+  passe s'il est protégé (laisser vide sinon — un mot de passe saisi pour un
+  bundle non protégé n'empêche pas l'import). Limite : 256 Ko.
+  L'application extrait le certificat feuille (celui qui correspond à la clé
+  privée), la clé et la chaîne (racine auto-signée omise), **en mémoire** : le
+  mot de passe n'est ni journalisé, ni stocké, ni transmis au helper.
+- **PEM / CRT avancé** : certificat (PEM ou DER), clé privée non chiffrée (PEM ou
+  DER) et chaîne PEM optionnelle — comportement d'origine inchangé.
+
+Dans les deux cas : validation complète par le helper → résumé affiché (sujet,
+émetteur, SAN, dates, empreinte, méthode, taille de chaîne) → **activation
+explicite** → bascule atomique, `nginx -t`, reload, vérification du certificat
+réellement servi, rollback automatique en cas d'échec.
+
+> Un certificat importé manuellement reste actif **jusqu'au prochain
+> renouvellement Let's Encrypt** : le timer Certbot (~30 jours avant l'expiration
+> du certificat Let's Encrypt) rappelle le hook de déploiement, qui réinstalle la
+> paire Let's Encrypt. Pour conserver durablement un certificat importé, il faut
+> désactiver le renouvellement pour ce domaine (`sudo certbot renew --cert-name
+> hub.valdev.me ...` ou le timer) — décision d'exploitation, non automatisée ici.
+
 ### Consulter / remplacer
 
 `/admin/certificats` : état de la paire active (sujet, émetteur, SAN, dates,
@@ -207,6 +232,10 @@ Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 | 403 depuis l'extérieur | comportement attendu pour une IP hors allowlist (`/etc/nginx/conf.d/00-application-access.conf`) |
 | Renouvellement certbot en échec | `sudo certbot renew --cert-name hub.valdev.me --dry-run -v` ; vérifier la location `acme-challenge` du vhost |
 | Session admin perdue après mise à jour | la clé de signature vit dans `runtime/data/.secret_key` — vérifier sa présence (0600) |
+| Import PKCS#12 : « Impossible d'ouvrir le fichier PKCS#12. Vérifiez le mot de passe. » | mot de passe erroné, bundle corrompu ou fichier qui n'est pas un PKCS#12 (un PEM déposé dans ce champ est signalé explicitement) |
+| Import PKCS#12 : « utilise un algorithme non pris en charge » | bundle produit par un outil ancien (RC2/3DES) ; réexporter en AES/PBES2 ou passer par la méthode PEM |
+| Import PKCS#12 : « ne contient pas de clé privée » | le bundle ne contient qu'un certificat : utiliser la méthode PEM avec la clé séparée |
+| Import refusé : « trop volumineux » | un bundle PKCS#12 fait quelques kilo-octets ; la limite est fixée à 256 Ko |
 
 ## 11. Contrôles de recette
 

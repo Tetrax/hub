@@ -50,6 +50,7 @@ Détails : `docs/architecture.md`.
 | En-têtes de sécurité / frontière proxy | `app/security.py` |
 | Validation des URLs du catalogue | `app/urls.py` |
 | Dialogue app ↔ certificats | `app/certclient.py` + `app/hub_cert_protocol.py` |
+| Lecture des bundles certificat (PKCS#12/PFX, DER) | `app/certparse.py` (en mémoire) |
 | Validation/activation TLS | `helper/hub_certctl.py` (une seule implémentation) |
 | Service privilégié | `helper/hub_cert_helper.py` + `deploy/hub-cert-helper.service` |
 | Déploiement | `compose.yaml` + `scripts/build.sh` + `scripts/deploy.sh` |
@@ -99,9 +100,9 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 171 tests pytest (validation d'entrées, uploads, auth, CRUD,
-  catégories, migration, thème, landing, sécurité, certificats/rollback,
-  intégration app ↔ helper par socket).
+- `tests/` : 205 tests pytest (validation d'entrées, uploads, auth, CRUD,
+  catégories, migration, thème, bundles PKCS#12/PFX et DER, landing, sécurité,
+  certificats/rollback, intégration app ↔ helper par socket).
 - `tests/browser/acceptance.py` : recette navigateur réelle (desktop, mobile,
   admin) via Playwright.
 - `tests/browser/capture_apps.py` : captures des applications pour le catalogue.

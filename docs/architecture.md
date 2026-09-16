@@ -48,8 +48,9 @@ surveille aucune des applications qu'il référence.
   `certclient.py` + `hub_cert_protocol.py` (client du helper), `security.py`
   (en-têtes, frontière proxy, origine), `auth.py` (scrypt, sessions, CSRF,
   verrouillage), `uploads.py` (validation par magic bytes), `urls.py`
-  (validation d'entrées), `manage.py` (CLI d'exploitation). `catalog.py` porte
-  aussi les catégories (CRUD, ordre, réassignation).
+  (validation d'entrées), `certparse.py` (lecture PKCS#12/PFX et DER, en mémoire),
+  `manage.py` (CLI d'exploitation). `catalog.py` porte aussi les catégories
+  (CRUD, ordre, réassignation).
 
 ### 2. Modèle de données
 
@@ -129,14 +130,23 @@ immédiate, téléversement de screenshots (PNG/JPEG/WebP, 4 Mo, magic bytes).
 
 ### Remplacement du certificat (admin)
 
+Deux méthodes d'import alimentent le **même** pipeline sécurisé :
+
 ```
-upload (cert + clé [+ chaîne])
-   ↓ helper.validate  → validation complète, métadonnées, ticket (10 min, usage unique)
+PKCS#12 / PFX (.p12/.pfx [+ mot de passe])          PEM / CRT (avancé)
+        ↓ app/certparse.py (mémoire seule)                  ↓ (PEM ou DER)
+  feuille + clé + chaîne (racine omise)                 certificat + clé [+ chaîne]
+        └──────────────────────┬─────────────────────────────┘
+   helper.validate  → validation complète, métadonnées, ticket (10 min, usage unique)
    ↓ activation       → revalidation, sauvegarde de la paire active
    ↓ bascule atomique → nginx -t → reload → vérification du certificat servi
    ↓ succès            → ancienne génération purgée
    ↓ échec             → rollback : ancienne paire restaurée + reload
 ```
+
+La lecture d'un bundle PKCS#12 se fait **dans l'application, en mémoire** : aucun
+fichier temporaire, mot de passe éphémère jamais journalisé ni transmis au helper
+(voir D13). Le helper ne voit que des PEM, comme avant.
 
 ### Renouvellement Let's Encrypt
 
