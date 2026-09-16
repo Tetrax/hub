@@ -1,11 +1,11 @@
-"""Administration du certificat TLS de Hub (via le helper root).
+"""Administration du certificat TLS de Hub (backend helper ou proxy).
 
 Parcours en deux temps :
-1. **Valider** : la paire (certificat, clé, chaîne) est envoyée au helper qui
-   effectue toutes les vérifications et renvoie les métadonnées + un ticket à
-   usage unique lié à la session (10 minutes) ;
-2. **Activer** : le helper revalide, bascule la paire atomiquement, teste et
-   recharge Nginx, vérifie le certificat réellement servi — et restaure la paire
+1. **Valider** : la paire (certificat, clé, chaîne) est vérifiée par le backend
+   configuré (`helper` sur le VPS, `proxy` en standalone) qui renvoie les
+   métadonnées + un ticket à usage unique lié à la session (10 minutes) ;
+2. **Activer** : le backend revalide, bascule la paire atomiquement, recharge le
+   serveur TLS, vérifie le certificat réellement servi — et restaure la paire
    précédente en cas d'échec.
 
 Deux méthodes d'import alimentent ce même pipeline :
@@ -22,7 +22,7 @@ import json
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 
-from . import auth, certclient, certparse, db
+from . import auth, certbackend, certparse, db
 from .security import origin_ok
 
 bp = Blueprint("cert", __name__, url_prefix="/admin/certificates")
@@ -42,8 +42,8 @@ def _require_csrf(session_row: dict) -> None:
 def _render_page(session_row: dict, *, validation=None, status_code: int = 200):
     status, helper_error = None, None
     try:
-        status = certclient.get_status()
-    except certclient.CertHelperError as error:
+        status = certbackend.get_backend().get_status()
+    except certbackend.CertBackendError as error:
         helper_error = str(error)
     return (
         render_template(
@@ -64,8 +64,10 @@ def _finish_validation(
 ):
     """Pipeline commun : validation par le helper, ticket à usage unique, résumé."""
     try:
-        result = certclient.validate_certificate(certificate, private_key, chain)
-    except certclient.CertHelperError as error:
+        result = certbackend.get_backend().validate_certificate(
+            certificate, private_key, chain
+        )
+    except certbackend.CertBackendError as error:
         flash(f"Validation refusée : {error}", "error")
         return redirect(url_for("cert.certificates"))
 
@@ -217,17 +219,18 @@ def activate():
         flash("Validation expirée ; relancez la validation.", "error")
         return redirect(url_for("cert.certificates"))
     try:
-        result = certclient.activate_certificate(ticket)
-    except certclient.CertHelperError as error:
+        result = certbackend.get_backend().activate_certificate(ticket)
+    except certbackend.CertBackendError as error:
         flash(f"Activation refusée : {error}", "error")
-        current_app.logger.warning("Certificat : activation refusée par le helper")
+        current_app.logger.warning("Certificat : activation refusée par le backend")
     else:
         summary = result.get("summary", {})
         current_app.logger.info(
             "Certificat : activation réussie (expire le %s)", summary.get("notAfter", "?")
         )
+        target = "le serveur HTTPS du Hub" if result.get("backend") == "local" else "Nginx"
         flash(
-            "Certificat activé : Nginx a été testé, rechargé et le certificat servi a été vérifié.",
+            f"Certificat activé : {target} a été rechargé et le certificat servi a été vérifié.",
             "success",
         )
     finally:

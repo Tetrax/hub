@@ -11,7 +11,7 @@ from . import auth, db
 from .config import ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -25,6 +25,12 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         UPLOADS_DIR=str(config["UPLOADS_DIR"]),
         TLS_HOSTNAME=config["TLS_HOSTNAME"],
         CERT_HELPER_SOCKET=config["CERT_HELPER_SOCKET"],
+        CERT_BACKEND=config["CERT_BACKEND"],
+        CERTS_DIR=config["CERTS_DIR"],
+        TLS_CERT_FILE=config["TLS_CERT_FILE"],
+        TLS_KEY_FILE=config["TLS_KEY_FILE"],
+        TLS_BIND_PORT=config["TLS_BIND_PORT"],
+        GUNICORN_PIDFILE=config["GUNICORN_PIDFILE"],
         SESSION_TTL_SECONDS=config["SESSION_TTL_SECONDS"],
         GIT_SHA=config["GIT_SHA"],
         PROJECT_URL=config["PROJECT_URL"],
@@ -41,6 +47,8 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         SESSION_COOKIE_SECURE=False,
         TEMPLATES_AUTO_RELOAD=False,
     )
+    # Frontière proxy : seuls les CIDR explicitement déclarés sont de confiance ;
+    # sans CIDR, les en-têtes X-Forwarded-* sont ignorés (voir app/security.py).
     app.extensions["hub_trusted_proxies"] = parse_cidrs(config["TRUSTED_PROXY_CIDRS"])
     db.init_db(app.config["DB_PATH"])
     app.teardown_appcontext(auth.close_db)

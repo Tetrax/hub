@@ -5,7 +5,12 @@
 <div class="admin-header">
   <div>
     <h1 class="admin-title">Certificats</h1>
-    <p class="admin-sub">Certificat TLS servi par Nginx pour {{ tls_hostname or 'Hub' }}.</p>
+    <p class="admin-sub">
+      Certificat TLS servi pour {{ tls_hostname or 'Hub' }}
+      {%- if status and status.get('backend') == 'local' %} (HTTPS servi par le Hub)
+      {%- elif status and status.get('backend') == 'none' %} (TLS géré par l'infrastructure)
+      {%- else %} (Nginx via le helper){% endif %}.
+    </p>
   </div>
 </div>
 
@@ -45,7 +50,24 @@
 <section class="panel">
   <h2 class="panel-title">Certificat actif</h2>
   {% if helper_error %}
-  <p class="notice notice-error">Helper indisponible : {{ helper_error }}</p>
+  <p class="notice notice-error">Gestion des certificats indisponible : {{ helper_error }}</p>
+  {% elif status and status.get('bootstrap') %}
+  {% set served = status.get('served') or {} %}
+  <p class="notice notice-warn">
+    <strong>Certificat temporaire de bootstrap.</strong> Le Hub sert un certificat
+    auto-signé, le temps qu'un certificat définitif soit installé : il sera remplacé
+    automatiquement à la première activation (aucune action supplémentaire).
+  </p>
+  <dl class="kv">
+    <dt>Sujet</dt><dd class="mono">{{ served.get('subject') or '—' }}</dd>
+    <dt>Émetteur</dt><dd class="mono">{{ served.get('issuer') or '—' }}</dd>
+    <dt>Expiration</dt><dd>{{ served.get('notAfter') or '—' }}</dd>
+    <dt>Empreinte SHA-256</dt><dd class="mono">{{ served.get('fingerprintSha256') or '—' }}</dd>
+  </dl>
+  <p class="form-hint">
+    Votre navigateur affichera un avertissement de sécurité tant que le certificat
+    définitif (PKCS#12 de votre PKI) n'est pas installé.
+  </p>
   {% elif status and status['present'] and status['certificate'] %}
   {% set certificate = status['certificate'] %}
   <dl class="kv">
@@ -66,11 +88,11 @@
   </dl>
   {% if status.get('servedMatches') is sameas false %}
   <p class="notice notice-warn">
-    Le certificat réellement présenté par Nginx ne correspond pas à la paire gérée :
-    vérifiez la configuration Nginx avant de poursuivre.
+    Le certificat réellement présenté ne correspond pas à la paire gérée :
+    vérifiez la configuration du serveur TLS avant de poursuivre.
   </p>
   {% elif status.get('servedMatches') %}
-  <p class="notice notice-ok">Le certificat servi par Nginx correspond à la paire gérée.</p>
+  <p class="notice notice-ok">Le certificat réellement servi correspond à la paire gérée.</p>
   {% endif %}
   {% else %}
   <p class="notice notice-warn">

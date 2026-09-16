@@ -13,6 +13,7 @@ from pathlib import Path
 
 DEFAULT_DATA_DIR = Path("runtime/data")
 DEFAULT_CERT_SOCKET = "/run/hub-cert-helper/helper.sock"
+DEFAULT_CERTS_DIR = "/certs"
 
 
 def _env_int(name: str, default: int) -> int:
@@ -36,6 +37,15 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         "SECRET_KEY_FILE": data_dir / ".secret_key",
         "TLS_HOSTNAME": os.environ.get("HUB_TLS_HOSTNAME", "").strip(),
         "CERT_HELPER_SOCKET": os.environ.get("HUB_CERT_HELPER_SOCKET", DEFAULT_CERT_SOCKET),
+        # Backend de gestion des certificats : helper (VPS, défaut), local
+        # (standalone : le serveur HTTPS du conteneur est rechargé par SIGHUP),
+        # none (TLS assuré en amont par l'infrastructure).
+        "CERT_BACKEND": os.environ.get("HUB_CERT_BACKEND", "helper").strip().lower(),
+        "CERTS_DIR": os.environ.get("HUB_CERTS_DIR", DEFAULT_CERTS_DIR),
+        "TLS_CERT_FILE": os.environ.get("HUB_TLS_CERT", "").strip(),
+        "TLS_KEY_FILE": os.environ.get("HUB_TLS_KEY", "").strip(),
+        "TLS_BIND_PORT": _env_int("HUB_TLS_BIND_PORT", 8443),
+        "GUNICORN_PIDFILE": os.environ.get("HUB_GUNICORN_PIDFILE", "/tmp/gunicorn.pid"),
         "TRUSTED_PROXY_CIDRS": os.environ.get("HUB_TRUSTED_PROXY_CIDRS", ""),
         "SESSION_TTL_SECONDS": _env_int("HUB_SESSION_TTL_SECONDS", 12 * 3600),
         "GIT_SHA": os.environ.get("HUB_GIT_SHA", "").strip()[:40] or None,
