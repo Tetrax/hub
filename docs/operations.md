@@ -528,6 +528,17 @@ avec chaîne, activation, **certificat réellement présenté**, persistance apr
 Avec `STANDALONE_CHECK_BROWSER=1`, la recette navigateur réelle est rejouée
 contre ce déploiement (résolution du nom par Chromium, aucun `/etc/hosts` touché).
 
+Depuis le VPS, la recette navigateur de production doit passer par la loopback :
+en résolvant le nom publiquement, le navigateur sort par l'IP publique du VPS —
+**refusée par l'allowlist**, ce qui est le comportement attendu (403). La règle
+de résolution Chromium évite de toucher `/etc/hosts` :
+
+```bash
+HUB_BASE_URL=https://hub.valdev.me \
+HUB_HOST_RESOLVER="MAP hub.valdev.me 127.0.0.1" \
+HUB_SCOPE=public .venv/bin/python tests/browser/acceptance.py
+```
+
 La recette navigateur exige Playwright + Chromium (`requirements-dev.txt`) ; sur
 un poste neuf : `playwright install chromium`. Variables : `HUB_SCOPE`
 (`full` / `public`), `HUB_ADMIN_PASSWORD` (compte existant), `HUB_SKIP_CERT`

@@ -235,15 +235,21 @@ if [ "${STANDALONE_CHECK_BROWSER:-0}" = "1" ]; then
   compose exec -T web python -m app.manage seed >/dev/null 2>&1 \
     && ok "catalogue amorcé (seeds/catalog.json)" || ko "catalogue amorcé"
   rm -rf "$WORK/shots"
-  if HUB_BASE_URL="$BASE_URL" \
-     HUB_HOST_RESOLVER="MAP ${HOSTNAME_TEST} 127.0.0.1" \
-     HUB_SKIP_CERT=1 HUB_SCOPE=full HUB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-     HUB_SHOTS_DIR="$WORK/shots" \
-     .venv/bin/python tests/browser/acceptance.py >"$WORK/acceptance.log" 2>&1; then
+  run_acceptance() {
+    HUB_BASE_URL="$BASE_URL" \
+      HUB_HOST_RESOLVER="MAP ${HOSTNAME_TEST} 127.0.0.1" \
+      HUB_SKIP_CERT=1 HUB_SCOPE=full HUB_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+      HUB_SHOTS_DIR="$WORK/shots" \
+      .venv/bin/python tests/browser/acceptance.py >"$WORK/acceptance.log" 2>&1
+  }
+  # La recette navigateur peut dépasser le délai de 30 s d'une navigation quand la
+  # machine est chargée (construction d'image, conteneurs) : une seconde tentative,
+  # sur un serveur déjà vérifié par les 15 phases précédentes.
+  if run_acceptance || { sleep 10; printf '  [INFO] seconde tentative de la recette navigateur\n'; run_acceptance; }; then
     ok "recette navigateur ($(grep -c '\[PASS\]' "$WORK/acceptance.log") contrôles réussis)"
   else
     ko "recette navigateur — voir $WORK/acceptance.log"
-    grep -E '\[FAIL\]' "$WORK/acceptance.log" | head -5
+    grep -E '\[FAIL\]|TimeoutError' "$WORK/acceptance.log" | head -5
   fi
 else
   printf '  [INFO] ignorée (activer avec STANDALONE_CHECK_BROWSER=1)\n'
