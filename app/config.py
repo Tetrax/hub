@@ -42,6 +42,7 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         "MAX_CONTENT_LENGTH": 8 * 1024 * 1024,  # requête HTTP complète
         "MAX_UPLOAD_BYTES": 4 * 1024 * 1024,  # screenshot
         "CERT_MAX_BYTES": 512 * 1024,  # certificat / clé / chaîne (chacun)
+        "CERT_BUNDLE_MAX_BYTES": 256 * 1024,  # bundle PKCS#12 (.p12/.pfx)
         "PROJECT_URL": "https://github.com/Tetrax/hub",
     }
     if overrides:

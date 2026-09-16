@@ -11,7 +11,7 @@ from . import auth, db
 from .config import ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, parse_cidrs
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -32,6 +32,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         MAX_CONTENT_LENGTH=config["MAX_CONTENT_LENGTH"],
         MAX_UPLOAD_BYTES=config["MAX_UPLOAD_BYTES"],
         CERT_MAX_BYTES=config["CERT_MAX_BYTES"],
+        CERT_BUNDLE_MAX_BYTES=config["CERT_BUNDLE_MAX_BYTES"],
         TEMPLATES_AUTO_RELOAD=False,
     )
     app.extensions["hub_trusted_proxies"] = parse_cidrs(config["TRUSTED_PROXY_CIDRS"])

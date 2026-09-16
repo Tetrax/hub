@@ -7,6 +7,12 @@ Parcours en deux temps :
 2. **Activer** : le helper revalide, bascule la paire atomiquement, teste et
    recharge Nginx, vérifie le certificat réellement servi — et restaure la paire
    précédente en cas d'échec.
+
+Deux méthodes d'import alimentent ce même pipeline :
+- **PKCS#12 / PFX** (recommandé) : un seul fichier, éventuellement protégé par un
+  mot de passe, dont on extrait le certificat feuille, la clé privée et la chaîne
+  — le tout en mémoire, mot de passe éphémère jamais conservé ;
+- **PEM / CRT avancé** : certificat, clé privée et chaîne séparés (DER accepté).
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ import json
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 
-from . import auth, certclient, db
+from . import auth, certclient, certparse, db
 from .security import origin_ok
 
 bp = Blueprint("cert", __name__, url_prefix="/admin/certificates")
@@ -50,6 +56,48 @@ def _render_page(session_row: dict, *, validation=None, status_code: int = 200):
             validation=validation,
         ),
         status_code,
+    )
+
+
+def _finish_validation(
+    session_row: dict, certificate: bytes, private_key: bytes, chain: bytes, *, source: str
+):
+    """Pipeline commun : validation par le helper, ticket à usage unique, résumé."""
+    try:
+        result = certclient.validate_certificate(certificate, private_key, chain)
+    except certclient.CertHelperError as error:
+        flash(f"Validation refusée : {error}", "error")
+        return redirect(url_for("cert.certificates"))
+
+    ticket = result.get("ticket", "")
+    connection = auth.db_connection()
+    connection.execute(
+        "DELETE FROM cert_validations WHERE session_hash = ? OR expires_at <= ?",
+        (session_row["token_hash"], db.now_iso()),
+    )
+    connection.execute(
+        "INSERT INTO cert_validations (ticket_hash, session_hash, summary, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            hashlib.sha256(ticket.encode("ascii")).hexdigest(),
+            session_row["token_hash"],
+            _serialize_summary(result),
+            db.now_iso(),
+            result.get("expiresAt", db.now_iso()),
+        ),
+    )
+    connection.commit()
+    current_app.logger.info(
+        "Certificat : paire validée (import %s, en attente d'activation)", source
+    )
+    return _render_page(
+        session_row,
+        validation={
+            "summary": result.get("summary", {}),
+            "ticket": ticket,
+            "expiresAt": result.get("expiresAt"),
+            "source": source,
+        },
     )
 
 
@@ -98,38 +146,47 @@ def validate():
         return redirect(url_for("cert.certificates"))
 
     try:
-        result = certclient.validate_certificate(certificate, private_key, chain)
-    except certclient.CertHelperError as error:
-        flash(f"Validation refusée : {error}", "error")
+        certificate = certparse.normalize_certificate(certificate)
+        private_key = certparse.normalize_private_key(private_key)
+    except certparse.CertificateInputError as error:
+        current_app.logger.info("Certificat : import PEM refusé (%s)", error.code)
+        flash(str(error), "error")
         return redirect(url_for("cert.certificates"))
+    return _finish_validation(session_row, certificate, private_key, chain, source="PEM")
 
-    ticket = result.get("ticket", "")
-    connection = auth.db_connection()
-    connection.execute(
-        "DELETE FROM cert_validations WHERE session_hash = ? OR expires_at <= ?",
-        (session_row["token_hash"], db.now_iso()),
-    )
-    connection.execute(
-        "INSERT INTO cert_validations (ticket_hash, session_hash, summary, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (
-            hashlib.sha256(ticket.encode("ascii")).hexdigest(),
-            session_row["token_hash"],
-            _serialize_summary(result),
-            db.now_iso(),
-            result.get("expiresAt", db.now_iso()),
-        ),
-    )
-    connection.commit()
-    current_app.logger.info("Certificat : paire validée (en attente d'activation)")
-    return _render_page(
-        session_row,
-        validation={
-            "summary": result.get("summary", {}),
-            "ticket": ticket,
-            "expiresAt": result.get("expiresAt"),
-        },
-    )
+
+@bp.post("/validate-pkcs12")
+@auth.admin_required
+def validate_pkcs12():
+    """Import PKCS#12 / PFX : extraction en mémoire puis pipeline commun."""
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    max_bytes = current_app.config["CERT_BUNDLE_MAX_BYTES"]
+    data = b""
+    password = ""
+    storage = request.files.get("bundle")
+    if storage is None or not storage.filename:
+        flash("Le fichier PKCS#12 (.p12 / .pfx) est requis.", "error")
+        return redirect(url_for("cert.certificates"))
+    try:
+        data = storage.read(max_bytes + 1)
+        password = request.form.get("password") or ""
+        if not data:
+            raise certparse.CertificateInputError("Le fichier est vide.", "empty")
+        if len(data) > max_bytes:
+            raise certparse.CertificateInputError(
+                f"Fichier trop volumineux ({max_bytes // 1024} Ko maximum).", "too_large"
+            )
+        certificate, private_key, chain = certparse.extract_pkcs12(data, password)
+    except certparse.CertificateInputError as error:
+        # Ni le mot de passe ni le contenu du bundle n'apparaissent ici.
+        current_app.logger.info("Certificat : import PKCS#12 refusé (%s)", error.code)
+        flash(str(error), "error")
+        return redirect(url_for("cert.certificates"))
+    finally:
+        # Le secret est abandonné immédiatement : aucune trace durable.
+        del data, password
+    return _finish_validation(session_row, certificate, private_key, chain, source="PKCS#12")
 
 
 def _serialize_summary(result: dict) -> str:

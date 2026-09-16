@@ -507,6 +507,31 @@ table.admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 
 .select-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
 .select-row .select { flex: 1 1 200px; }
+
+/* --- Sélecteur de méthode d'import (onglets CSS, fonctionne sans JS) ------- */
+
+.method-switch { margin-top: 0.2rem; }
+.method-radio {
+  position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+}
+.method-tab {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.42rem 0.95rem; margin: 0 0.35rem 0.9rem 0;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--muted); font-size: 0.88rem; cursor: pointer;
+  background: var(--chip-bg);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.method-tab:hover { border-color: var(--border-strong); color: var(--text); }
+.method-radio:focus-visible + .method-tab { outline: 2px solid var(--focus); outline-offset: 2px; }
+#method-pkcs12:checked ~ label[for="method-pkcs12"],
+#method-pem:checked ~ label[for="method-pem"] {
+  border-color: var(--rose); color: var(--rose-pale); background: var(--chip-active-bg);
+  box-shadow: inset 0 0 0 1px rgba(244, 168, 201, 0.25); font-weight: 600;
+}
+.method-panel { display: none; }
+#method-pkcs12:checked ~ #panel-pkcs12,
+#method-pem:checked ~ #panel-pem { display: block; }
 .row-inline-form { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .row-static-name { font-weight: 600; font-size: 0.92rem; }
 .quick-add { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.35rem; }
@@ -555,6 +580,7 @@ table.admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   .grid { grid-template-columns: 1fr; gap: 1.1rem; }
   .kv { grid-template-columns: 1fr; gap: 0.1rem 0; }
   .kv dt { margin-top: 0.5rem; }
+  .method-tab { min-height: 44px; padding: 0.6rem 1.1rem; }  /* cible tactile confortable */
   .admin-table { font-size: 0.84rem; }
   .admin-table-apps th:nth-child(4), .admin-table-apps td:nth-child(4) { display: none; }
 }

@@ -28,6 +28,7 @@
     </dd>
     <dt>Empreinte SHA-256</dt><dd class="mono">{{ summary['fingerprintSha256'] }}</dd>
     <dt>Certificats dans la chaîne</dt><dd>{{ summary['chainLength'] }}</dd>
+    <dt>Méthode d'import</dt><dd>{{ validation.get('source', 'PEM') }}</dd>
   </dl>
   <p class="form-hint">Validation valable jusqu'à : {{ validation['expiresAt'] }} (usage unique).</p>
   <form method="post" action="{{ url_for('cert.activate') }}">
@@ -44,7 +45,7 @@
 <section class="panel">
   <h2 class="panel-title">Certificat actif</h2>
   {% if helper_error %}
-  <p class="notice notice-error">Helper certificat indisponible : {{ helper_error }}</p>
+  <p class="notice notice-error">Helper indisponible : {{ helper_error }}</p>
   {% elif status and status['present'] and status['certificate'] %}
   {% set certificate = status['certificate'] %}
   <dl class="kv">
@@ -80,40 +81,92 @@
 </section>
 
 <section class="panel">
-  <h2 class="panel-title">Remplacer le certificat</h2>
+  <h2 class="panel-title">Importer un certificat</h2>
   <p class="panel-sub">
     Déroulé sécurisé : validation complète → sauvegarde de la paire active → bascule atomique →
     <span class="mono">nginx -t</span> → rechargement → vérification du certificat servi →
     rollback automatique en cas d'échec.
   </p>
-  <form method="post" enctype="multipart/form-data" action="{{ url_for('cert.validate') }}">
-    <input type="hidden" name="_csrf" value="{{ csrf }}">
-    <div class="form-grid">
-      <div class="form-field">
-        <label class="form-label" for="certificate">Certificat (PEM, .crt/.pem)</label>
-        <input class="input" id="certificate" name="certificate" type="file"
-               accept=".pem,.crt,.cer" required>
-      </div>
-      <div class="form-field">
-        <label class="form-label" for="private_key">Clé privée (PEM, non chiffrée)</label>
-        <input class="input" id="private_key" name="private_key" type="file"
-               accept=".key,.pem" required>
-      </div>
-      <div class="form-field form-field-wide">
-        <label class="form-label" for="chain">Chaîne / intermédiaires (PEM, optionnel)</label>
-        <input class="input" id="chain" name="chain" type="file" accept=".pem,.crt,.cer">
-        <p class="form-hint">
-          Si le fichier certificat contient déjà la chaîne complète, laissez ce champ vide.
-        </p>
-      </div>
+  {% if helper_error %}
+  <p class="notice notice-warn">
+    Le helper certificat est actuellement injoignable : un import sera refusé tant qu'il n'est pas
+    rétabli (<span class="mono">systemctl status hub-cert-helper</span>).
+  </p>
+  {% endif %}
+
+  <div class="method-switch" role="group" aria-label="Méthode d'import du certificat">
+    <input class="method-radio" type="radio" name="cert_method" id="method-pkcs12" checked>
+    <label class="method-tab" for="method-pkcs12">PKCS#12 / PFX <span class="cell-tag">recommandé</span></label>
+    <input class="method-radio" type="radio" name="cert_method" id="method-pem">
+    <label class="method-tab" for="method-pem">PEM / CRT — avancé</label>
+
+    <div class="method-panel" id="panel-pkcs12">
+      <p class="form-hint">
+        Un seul fichier, contenant généralement le certificat, la clé privée et la chaîne
+        intermédiaire. Formats acceptés : <span class="mono">.p12</span>, <span class="mono">.pfx</span>
+        — {{ config.CERT_BUNDLE_MAX_BYTES // 1024 }} Ko maximum.
+      </p>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('cert.validate_pkcs12') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <div class="form-grid">
+          <div class="form-field">
+            <label class="form-label" for="bundle">Fichier PKCS#12 (.p12 / .pfx)</label>
+            <input class="input" id="bundle" name="bundle" type="file" accept=".p12,.pfx" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="pfx_password">Mot de passe du fichier (si nécessaire)</label>
+            <input class="input" id="pfx_password" name="password" type="password"
+                   autocomplete="off" maxlength="256" placeholder="laisser vide si aucun">
+            <p class="form-hint">Jamais conservé, jamais journalisé, jamais transmis au helper.</p>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="button button-primary" type="submit">Valider et installer</button>
+        </div>
+      </form>
     </div>
-    <div class="form-actions">
-      <button class="button button-primary" type="submit">Valider la paire</button>
+
+    <div class="method-panel" id="panel-pem">
+      <p class="form-hint">
+        Utilisez cette méthode si le certificat et la clé privée sont fournis séparément
+        (PEM ou DER ; clé privée non chiffrée).
+      </p>
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('cert.validate') }}">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <div class="form-grid">
+          <div class="form-field">
+            <label class="form-label" for="certificate">Certificat (.pem/.crt/.cer, PEM ou DER)</label>
+            <input class="input" id="certificate" name="certificate" type="file"
+                   accept=".pem,.crt,.cer,.der" required>
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="private_key">Clé privée (PEM ou DER, non chiffrée)</label>
+            <input class="input" id="private_key" name="private_key" type="file"
+                   accept=".key,.pem,.der" required>
+          </div>
+          <div class="form-field form-field-wide">
+            <label class="form-label" for="chain">Chaîne / intermédiaires (PEM, optionnel)</label>
+            <input class="input" id="chain" name="chain" type="file" accept=".pem,.crt,.cer">
+            <p class="form-hint">
+              Si le fichier certificat contient déjà la chaîne complète, laissez ce champ vide.
+            </p>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="button button-primary" type="submit">Valider la paire</button>
+        </div>
+      </form>
     </div>
-  </form>
+  </div>
+
   <p class="form-hint">
-    La clé privée n'est jamais affichée, téléchargeable, ni journalisée ; elle n'est jamais
-    transmise à l'application, uniquement au helper root qui l'installe.
+    La clé privée n'est jamais affichée, téléchargeable, ni journalisée. Le contenu des fichiers
+    n'est traité qu'en mémoire, puis transmis au helper root qui l'installe.
+  </p>
+  <p class="form-hint">
+    Un certificat importé manuellement reste actif jusqu'au prochain renouvellement automatique
+    Let's Encrypt (déclenché environ 30 jours avant l'expiration du certificat Let's Encrypt) :
+    à ce moment-là, le hook Certbot réinstalle la paire Let's Encrypt.
   </p>
 </section>
 {% endblock %}

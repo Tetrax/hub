@@ -119,6 +119,17 @@ def test_filters_remain_links_without_js(app, client, admin):
     assert 'class="chip' in page
 
 
+def test_certificate_import_methods_switch_is_css_only(client):
+    """Le sélecteur de méthode doit fonctionner sans JavaScript et rester accessible."""
+    css = client.get("/static/css/hub.css").get_data(as_text=True)
+    assert "#method-pkcs12:checked ~ #panel-pkcs12" in css
+    assert "#method-pem:checked ~ #panel-pem" in css
+    assert ".method-radio:focus-visible + .method-tab" in css  # anneau de focus clavier
+
+
 def test_version_is_displayed(client):
+    from app import __version__
+
     body = client.get("/").get_data(as_text=True)
-    assert "SNS Hub v1.1.0" in body
+    assert f"SNS Hub v{__version__}" in body
+    assert client.get("/healthz").get_json()["version"] == __version__
