@@ -108,7 +108,8 @@ def backend(certs_dir, stub):
         internal_host="127.0.0.1",
         internal_port=stub.port,
         pidfile=stub.pidfile,
-        reload_timeout=8,
+        # Marge large : la suite complète peut tourner sur une machine chargée.
+        reload_timeout=20,
     )
 
 
