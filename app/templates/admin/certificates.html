@@ -92,6 +92,11 @@
     Le helper certificat est actuellement injoignable : un import sera refusé tant qu'il n'est pas
     rétabli (<span class="mono">systemctl status hub-cert-helper</span>).
   </p>
+  <p class="form-hint">
+    Si ce Hub est déployé derrière un reverse proxy qui termine le TLS (F5, HAProxy, Nginx
+    d'entreprise…), c'est normal : le certificat est alors géré par cette infrastructure et
+    l'import depuis le Hub n'est pas nécessaire.
+  </p>
   {% endif %}
 
   <div class="method-switch" role="group" aria-label="Méthode d'import du certificat">

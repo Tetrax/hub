@@ -9,9 +9,9 @@ from flask import Flask, jsonify, render_template, request
 
 from . import auth, db
 from .config import ensure_data_dirs, ensure_secret_key, load_config
-from .security import apply_security_headers, parse_cidrs
+from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -33,6 +33,12 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         MAX_UPLOAD_BYTES=config["MAX_UPLOAD_BYTES"],
         CERT_MAX_BYTES=config["CERT_MAX_BYTES"],
         CERT_BUNDLE_MAX_BYTES=config["CERT_BUNDLE_MAX_BYTES"],
+        # Cookie de session Flask (jeton CSRF de pré-authentification) : mêmes
+        # garde-fous que le cookie de session applicatif. `SECURE` est ajusté par
+        # requête (avant_request) selon le schéma réellement détecté.
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Strict",
+        SESSION_COOKIE_SECURE=False,
         TEMPLATES_AUTO_RELOAD=False,
     )
     app.extensions["hub_trusted_proxies"] = parse_cidrs(config["TRUSTED_PROXY_CIDRS"])
@@ -46,6 +52,15 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(cert_bp)
+
+    @app.before_request
+    def _session_cookie_policy():
+        # Le cookie de session Flask doit être `Secure` dès que la requête arrive
+        # en HTTPS (directement, ou via un proxy déclaré dans la frontière de
+        # confiance) — et rester utilisable en HTTP interne (VM sans proxy).
+        app.config["SESSION_COOKIE_SECURE"] = is_https(
+            request, app.extensions["hub_trusted_proxies"]
+        )
 
     @app.after_request
     def _security_headers(response):
