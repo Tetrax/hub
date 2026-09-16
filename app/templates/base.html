@@ -3,9 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <meta name="robots" content="noindex, nofollow, noarchive">
   <title>{% block title %}SNS Hub — Tous vos outils. Un seul accès.{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+  {# Applique le thème mémorisé avant le premier rendu (évite tout flash). #}
+  <script src="{{ url_for('static', filename='js/theme-init.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/hub.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -18,6 +21,20 @@
         <span class="brand-name">Hub</span>
       </a>
       <nav class="header-nav" aria-label="Navigation">
+        <button class="theme-toggle" type="button" data-theme-toggle
+                aria-label="Activer le mode clair" title="Thème clair / sombre">
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+               aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="4.1"></circle>
+            <path d="M12 3v2.1M12 18.9V21M3 12h2.1M18.9 12H21M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M18.4 5.6l-1.5 1.5M7.1 16.9l-1.5 1.5"></path>
+          </svg>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" width="18" height="18"
+               fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+               stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <path d="M20.4 14.6A8.4 8.4 0 0 1 9.4 3.6a8.6 8.6 0 1 0 11 11z"></path>
+          </svg>
+        </button>
         {% block header_nav %}
         <a class="nav-link" href="{{ url_for('admin.dashboard') }}">Administration</a>
         {% endblock %}

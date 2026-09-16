@@ -11,7 +11,7 @@ from . import auth, db
 from .config import ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, parse_cidrs
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
