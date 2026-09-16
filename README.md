@@ -38,13 +38,21 @@ aucune requête vers elles.
   chaîne et le certificat feuille sont extraits automatiquement (racine omise),
   le secret n'est jamais conservé ; mode **PEM / CRT avancé** conservé, avec
   détection réelle **DER**. Même pipeline de validation/activation que la V1.
+- Portabilité (V1.3) : le **même dépôt** se déploie sur le VPS (Nginx + helper +
+  Certbot) ou sur n'importe quelle VM Linux avec Docker — y compris **derrière
+  un reverse proxy d'entreprise** (TLS géré en amont) et **sans Nginx, sans
+  Certbot, sans helper**. `compose.yaml` est générique, `compose.vps.yaml` porte
+  les spécificités du VPS, `.env` la configuration locale (`HUB_BIND_IP`,
+  `HUB_PORT`, `HUB_UID/GID`, `HUB_TRUSTED_PROXY_CIDRS`…).
 
 ## Architecture
 
 ```
-Nginx (TLS, allowlist IP)  →  conteneur hub-web (gunicorn/Flask, SQLite)
-                                    ↕ socket Unix
-                            hub-cert-helper (root) → générations TLS atomiques
+Profil VPS        : Nginx (TLS, allowlist IP) → conteneur hub-web (SQLite)
+                                            ↕ socket Unix
+                                          hub-cert-helper (root)
+Profil générique  : proxy/LB d'entreprise (TLS) → conteneur hub-web (SQLite)
+                    (aucun Nginx, aucun helper sur l'hôte)
 ```
 
 Détails : [`docs/architecture.md`](docs/architecture.md) ·
@@ -77,6 +85,21 @@ HUB_BASE_URL=http://127.0.0.1:8000 .venv/bin/python tests/browser/acceptance.py
 ./scripts/deploy.sh                     # commit courant → image SHA → conteneur → healthcheck
 sudo ./scripts/backup.sh                # sauvegarde base + uploads + certificats
 ```
+
+Installation sur une nouvelle VM (Docker + Compose, sans Nginx/Certbot/helper) :
+
+```bash
+git clone https://github.com/Tetrax/hub && cd hub
+cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID/GID…
+sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
+docker compose up -d --build
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.3.0",…}
+```
+
+Sur le VPS, `.env` porte `COMPOSE_FILE=compose.yaml:compose.vps.yaml` : les
+spécificités locales (sous-réseau fixé, proxy de confiance, hostname, socket du
+helper) viennent de la surcharge versionnée. Variantes (proxy d'entreprise,
+Portainer, hors ligne, restauration) : [`docs/operations.md`](docs/operations.md) §9–§12.
 
 Rollback : redéployer l'image du commit précédent
 (`HUB_IMAGE_TAG=<sha> docker compose up -d --no-build`), données persistantes

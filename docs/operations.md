@@ -6,6 +6,30 @@ Toutes les commandes se lancent depuis le workspace canonique :
 cd /home/tetrax/workspace/hub
 ```
 
+## 0. Fichiers Compose et configuration
+
+Le déploiement combine deux fichiers versionnés et un fichier local :
+
+| Fichier | Rôle |
+|---|---|
+| `compose.yaml` | **générique et portable** (aucune valeur propre à une machine) |
+| `compose.vps.yaml` | **surcharge du VPS de production** (sous-réseau fixé, proxy de confiance, hostname) |
+| `.env` | **configuration locale** (jamais versionnée) : port, bind IP, UID/GID, proxy de confiance, chemins |
+
+`COMPOSE_FILE` (dans `.env`) indique quels fichiers Compose charger :
+
+```bash
+COMPOSE_FILE=compose.yaml                      # installation générique (défaut)
+COMPOSE_FILE=compose.yaml:compose.vps.yaml     # VPS avec Nginx + helper locaux
+```
+
+Toutes les commandes `docker compose ...` du dépôt (scripts inclus) respectent
+ce réglage. Vérifier le rendu effectif :
+
+```bash
+docker compose config | head -40
+```
+
 ## 1. Déploiement et rollback
 
 ### Déployer le commit courant
@@ -163,10 +187,32 @@ openssl s_client -connect 127.0.0.1:443 -servername hub.valdev.me </dev/null 2>/
 
 ### Amorçage manuel (nouvelle machine / reconstruction)
 
-1. `sudo scripts/install-helper.sh` (installe `/opt`, le service, l'env, le hook certbot) ;
+1. `sudo scripts/install-helper.sh` (installe `/opt`, le service, l'env, et le hook
+   Certbot **si Certbot est présent**) ;
 2. obtenir la paire (certbot webroot ou PKI interne) ;
 3. `sudo sh -c 'set -a; . /etc/hub-cert-helper.env; set +a; python3 /opt/hub-cert-helper/scripts/hub_cert_helper.py install --cert <fullchain.pem> --key <privkey.pem>'`
    → validation, activation, `nginx -t`, reload, vérification du certificat servi.
+
+### Sans helper (VM sans Nginx, TLS géré ailleurs)
+
+Le helper est **optionnel** : sans lui, la page `/admin/certificats` affiche
+« Helper indisponible » et refuse proprement les imports ; tout le reste du Hub
+fonctionne. Rien à configurer — ne pas installer le helper suffit.
+
+### Helper sans Nginx
+
+`HUB_CERT_RELOAD_NGINX=0` dans `/etc/hub-cert-helper.env` rend le helper
+autonome de Nginx : il valide et active la paire (bascule atomique + rollback)
+sans exécuter `nginx -t`, sans recharger Nginx et sans vérifier le certificat
+servi (cette vérification suppose un port 443 local). Utile si le TLS est
+terminé par un équipement externe qui lit la paire déposée dans
+`/var/lib/hub/certificates/active/`.
+
+```bash
+sudo sed -i 's/^HUB_CERT_RELOAD_NGINX=1/HUB_CERT_RELOAD_NGINX=0/' /etc/hub-cert-helper.env
+sudo systemctl restart hub-cert-helper
+sudo systemctl status hub-cert-helper --no-pager
+```
 
 ### Renouvellement Let's Encrypt
 
@@ -185,65 +231,209 @@ dans `active/`).
 ## 8. Sauvegarde et restauration
 
 ```bash
-sudo ./scripts/backup.sh                 # /home/tetrax/backups/hub/ (10 archives conservées)
+sudo ./scripts/backup.sh                 # destination : HUB_BACKUP_DIR
 HUB_BACKUP_DIR=/chemin sudo ./scripts/backup.sh
 ```
+
+La destination est résolue dans cet ordre : `HUB_BACKUP_DIR` (environnement),
+puis `HUB_BACKUP_DIR` du fichier `.env`, puis `./backups/hub` (défaut portable).
+Le VPS de production utilise `/home/tetrax/backups/hub` (valeur de son `.env`).
+Nombre d'archives conservées : `HUB_BACKUP_KEEP` (défaut 10).
 
 Contenu : `hub.sqlite` (copie cohérente), `uploads/`, `secret_key`,
 `MANIFEST.txt`, plus une archive séparée des certificats (`hub-certificates-*.tar.gz`).
 
 ### Restauration
 
+Les données vivent dans le répertoire pointé par `HUB_DATA_PATH`
+(`./runtime/data` par défaut). Restauration complète :
+
 ```bash
-sudo tar -xzf /home/tetrax/backups/hub/hub-backup-<stamp>.tar.gz -C /tmp/hub-restore
-sudo install -d -o 1000 -g 1000 -m 0755 runtime/data
-sudo install -o 1000 -g 1000 -m 0644 /tmp/hub-restore/hub.sqlite runtime/data/hub.sqlite
+ARCHIVE=/chemin/hub-backup-<stamp>.tar.gz
+sudo tar -xzf "$ARCHIVE" -C /tmp/hub-restore
+sudo scripts/prepare-data-dir.sh              # crée runtime/data au bon UID/GID
+sudo install -o "$(stat -c %u runtime/data)" -g "$(stat -c %g runtime/data)" \
+     -m 0644 /tmp/hub-restore/hub.sqlite runtime/data/hub.sqlite
 sudo cp -a /tmp/hub-restore/uploads/. runtime/data/uploads/
-sudo install -o 1000 -g 1000 -m 0600 /tmp/hub-restore/secret_key runtime/data/.secret_key
-sudo chown -R 1000:1000 runtime/data
-docker compose up -d --no-build
-curl -s http://127.0.0.1:13744/healthz
+sudo install -m 0600 -o "$(stat -c %u runtime/data)" -g "$(stat -c %g runtime/data)" \
+     /tmp/hub-restore/secret_key runtime/data/.secret_key
+sudo chown -R "$(stat -c %u runtime/data):$(stat -c %g runtime/data)" runtime/data
+docker compose up -d --no-build && curl -s http://127.0.0.1:13744/healthz
 ```
+
+Restauration partielle : seule la base (`hub.sqlite`) ou seuls les `uploads/`
+peuvent être remis en place de la même façon ; la clé de session
+(`.secret_key`) n'est utile que pour conserver les sessions en cours.
 
 Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 (le lien `active` est inclus) puis `sudo nginx -t && sudo systemctl reload nginx`
-(sous le verrou infra si d'autres changements nginx sont en cours).
+(sous le verrou infra si d'autres changements nginx sont en cours). Sans
+déploiement local de certificats, cette archive n'existe pas.
 
-## 9. Reconstruction complète (reprise sur une nouvelle machine)
+## 9. Installation sur une nouvelle VM
+
+Scénario cible : Linux + Docker + Docker Compose (+ Portainer en option),
+**sans Nginx local, sans Certbot, sans helper**. Le Hub fonctionne intégralement
+(landing, admin, catégories, recherche, thèmes, CRUD, uploads, SQLite, sessions,
+healthcheck, sauvegarde) ; seule la gestion des certificats est indisponible
+(elle suppose un Nginx local).
+
+```bash
+git clone https://github.com/Tetrax/hub && cd hub
+cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID/GID…
+sudo scripts/prepare-data-dir.sh        # crée runtime/data au bon propriétaire
+docker compose up -d --build            # ou HUB_IMAGE_TAG=<sha> … --no-build
+docker compose ps                       # attendre « healthy »
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.3.0",…}
+```
+
+Ensuite :
+
+- **accès direct** : `HUB_BIND_IP=0.0.0.0` (ou l'IP LAN) dans `.env`, port ouvert
+  uniquement au réseau autorisé (pare-feu / ACL) — le Hub n'a pas d'allowlist IP
+  propre, son contrôle d'accès est le compte admin ;
+- **derrière un proxy** : voir §11 ;
+- **certificat TLS** : géré par l'infrastructure porteuse (§11) ou, si le Hub
+  doit gérer lui-même la paire, en installant le helper (§7) ;
+- **HTTPS avec Nginx local** : exemple générique
+  `deploy/nginx/hub-generic.conf.example` (placeholders `HOSTNAME`, `UPSTREAM`,
+  `CERT_PATH`, `KEY_PATH`) ; sur RHEL/Rocky/Alma, l'y déposer dans
+  `/etc/nginx/conf.d/` ;
+- **sauvegarde** : `sudo ./scripts/backup.sh` (§8), à planifier (timer systemd
+  ou cron) — non automatisé par défaut.
+
+### VPS de production (reproduction à l'identique)
 
 1. Cloner `https://github.com/Tetrax/hub` dans `/home/tetrax/workspace/hub` ;
-2. `sudo install -d -o 1000 -g 1000 -m 0755 runtime/data runtime/data/uploads` ;
-3. `sudo scripts/install-helper.sh` ;
-4. config Nginx `deploy/nginx/hub.valdev.me.conf` → `sites-available` + symlink →
+2. `cp .env.example .env` puis renseigner `HUB_BACKUP_DIR=/home/tetrax/backups/hub`
+   et `COMPOSE_FILE=compose.yaml:compose.vps.yaml` ;
+3. `sudo scripts/prepare-data-dir.sh` ;
+4. `sudo scripts/install-helper.sh` ;
+5. config Nginx `deploy/nginx/hub.valdev.me.conf` → `sites-available` + symlink →
    `sudo nginx -t && sudo systemctl reload nginx` ;
-5. certificat : certbot (`--webroot -w /var/www/hub-acme -d hub.valdev.me`) puis
-   amorçage helper (section 4) ;
-6. `./scripts/deploy.sh` ou `HUB_IMAGE_TAG=<sha> docker compose up -d --no-build` ;
-7. restaurer la sauvegarde (section 5) si nécessaire.
+6. certificat : certbot (`--webroot -w /var/www/hub-acme -d hub.valdev.me`) puis
+   amorçage helper (§7) ;
+7. `./scripts/deploy.sh` ou `HUB_IMAGE_TAG=<sha> docker compose up -d --no-build` ;
+8. restaurer la sauvegarde (§8) si nécessaire.
 
-## 10. Dépannage
+## 10. Déploiement depuis Portainer
+
+Le même `compose.yaml` versionné est utilisé — aucune stack spécifique n'est
+créée dans Portainer.
+
+1. **Préparer l'hôte** (hors Portainer, en SSH) : cloner le dépôt dans le
+   répertoire de travail voulu, `cp .env.example .env`, ajuster les valeurs, puis
+   `sudo scripts/prepare-data-dir.sh` (le répertoire de données doit appartenir à
+   `HUB_UID:HUB_GID`, sinon le conteneur ne peut pas écrire) ;
+2. **Stack** → *Add stack* → *Repository* → URL
+   `https://github.com/Tetrax/hub`, branche `main`, **Compose path**
+   `compose.yaml` (ajouter `compose.vps.yaml` uniquement sur le VPS) ;
+3. **Variables d'environnement** : saisir celles de `.env` (`HUB_BIND_IP`,
+   `HUB_PORT`, `HUB_UID`, `HUB_GID`, `HUB_TRUSTED_PROXY_CIDRS`, `HUB_DATA_PATH`,
+   `HUB_IMAGE_TAG`…) — Portainer les injecte comme le ferait `.env` ;
+4. **Déployer** : Portainer construit l'image (contexte = clone du dépôt) si
+   `--build` est actif, sinon fournir une image déjà construite via
+   `HUB_IMAGE_TAG` + `docker load` (§12) ;
+5. **Vérifier** : `docker compose ps` (ou l'UI) → *healthy*, puis
+   `curl http://<hôte>:<port>/healthz` ;
+6. **Accès** : port publié selon `HUB_BIND_IP`/`HUB_PORT` ; derrière un reverse
+   proxy, voir §11.
+
+Le helper certificat (et le vhost Nginx) restent **hors** Portainer : ce sont des
+composants de l'hôte, installés une fois en SSH (`scripts/install-helper.sh`).
+
+## 11. Derrière un reverse proxy externe (mode recommandé en entreprise)
+
+```
+Utilisateur ── HTTPS ──▶ F5 / HAProxy / Nginx / LB d'entreprise ── HTTP ──▶ Hub (conteneur)
+```
+
+Côté Hub (`.env`) :
+
+```bash
+HUB_BIND_IP=127.0.0.1            # ou l'IP LAN si le proxy est sur une autre machine
+HUB_TRUSTED_PROXY_CIDRS=10.20.30.5/32   # IP SOURCE du proxy (pas celle des clients)
+HUB_TLS_HOSTNAME=hub.intra.example      # affichage seulement
+# pas de helper, pas de Certbot : le certificat vit sur l'équipement
+```
+
+Le proxy doit transmettre au minimum : `Host`, `X-Forwarded-Proto` et
+`X-Forwarded-For` (voir `deploy/nginx/hub-generic.conf.example`).
+
+**Pourquoi `HUB_TRUSTED_PROXY_CIDRS` est indispensable** : le Hub n'accepte
+`X-Forwarded-Proto`/`-For` que si la connexion vient d'un CIDR déclaré. Sans
+cette valeur (ou depuis une autre source), les en-têtes sont ignorés :
+détection HTTPS impossible (donc cookie de session **sans** `Secure` et pas de
+HSTS), et l'IP journalisée serait celle du proxy. Les en-têtes d'un client
+quelconque ne peuvent donc jamais forger une origine ou un schéma.
+
+Dans ce mode : **le certificat n'est jamais géré par le Hub** — il est installé
+et renouvelé sur le proxy / load balancer. La page `/admin/certificats` signale
+simplement que le helper est indisponible, ce qui est attendu.
+
+## 12. Environnement sans Internet (offline)
+
+Le **fonctionnement** du Hub n'exige aucun accès Internet (aucune ressource
+externe, aucune police distante, aucun appel sortant). Seule l'**installation**
+en a besoin (image de base + `pip`). Sur une machine connectée :
+
+```bash
+scripts/build.sh <tag>            # construit hub:<tag>
+scripts/save-image.sh <tag>       # → hub-<tag>.tar.gz (quelques centaines de Mo)
+```
+
+Sur la VM isolée :
+
+```bash
+git clone <dépôt> && cd hub && cp .env.example .env
+scripts/load-image.sh hub-<tag>.tar.gz
+echo 'HUB_IMAGE_TAG=<tag>' >> .env
+sudo scripts/prepare-data-dir.sh
+docker compose up -d --no-build
+```
+
+Le renouvellement Let's Encrypt, lui, suppose un accès réseau à l'ACME ; sur un
+réseau isolé, utiliser des certificats fournis par la PKI interne (import
+manuel, ou certificat géré par le proxy).
+
+## 13. Dépannage
 
 | Symptôme | Piste |
 |---|---|
-| `hub-web` unhealthy | `docker compose logs web` ; vérifier `runtime/data` inscriptible par uid 1000 |
-| Page admin : « Helper certificat indisponible » | `systemctl status hub-cert-helper` ; socket `/run/hub-cert-helper/helper.sock` ; env `/etc/hub-cert-helper.env` |
+| `hub-web` unhealthy, journal « Répertoire de données non inscriptible » | le répertoire de `HUB_DATA_PATH` n'appartient pas à `HUB_UID:HUB_GID` : `sudo scripts/prepare-data-dir.sh` puis `docker compose up -d` |
+| `hub-web` unhealthy (autre cause) | `docker compose logs web` ; vérifier que `HUB_DATA_PATH` existe et que le disque n'est pas plein |
+| `docker compose config` : « Pool overlaps » | un sous-réseau fixé entre en conflit avec le SI : ne pas charger `compose.vps.yaml` (générique = réseau Docker automatique) |
+| Page admin : « Helper certificat indisponible » | normal sans helper (VM générique, TLS par un proxy) ; sinon `systemctl status hub-cert-helper`, socket `/run/hub-cert-helper/helper.sock`, env `/etc/hub-cert-helper.env` |
+| Helper qui refuse de démarrer | `journalctl -u hub-cert-helper -n 50` ; sans Nginx local : `HUB_CERT_RELOAD_NGINX=0` requis |
+| Cookie de session non `Secure` / pas de HSTS derrière un proxy | `HUB_TRUSTED_PROXY_CIDRS` ne contient pas l'IP **source** du proxy (les `X-Forwarded-*` sont ignorés par conception) |
 | Activation refusée : « validation … » | le message du helper est affiché tel quel (dates, SAN, clé, chaîne) — corriger la paire fournie |
+| Activation : « Nginx a refusé la configuration » | soit `nginx -t` échoue réellement (config invalide), soit Nginx est absent et `HUB_CERT_RELOAD_NGINX=1` : passer à `0` |
 | « Le certificat servi ne correspond pas » | `nginx -t` puis reload ; vérifier que le vhost Hub pointe sur `active/` |
 | 403 depuis l'extérieur | comportement attendu pour une IP hors allowlist (`/etc/nginx/conf.d/00-application-access.conf`) |
 | Renouvellement certbot en échec | `sudo certbot renew --cert-name hub.valdev.me --dry-run -v` ; vérifier la location `acme-challenge` du vhost |
-| Session admin perdue après mise à jour | la clé de signature vit dans `runtime/data/.secret_key` — vérifier sa présence (0600) |
+| Message « Certbot non détecté » pendant `install-helper.sh` | attendu sur une machine sans Certbot : les certificats fournis manuellement restent installables, seul le renouvellement automatique est absent |
+| Session admin perdue après mise à jour | la clé de signature vit dans `<HUB_DATA_PATH>/.secret_key` — vérifier sa présence (0600) |
 | Import PKCS#12 : « Impossible d'ouvrir le fichier PKCS#12. Vérifiez le mot de passe. » | mot de passe erroné, bundle corrompu ou fichier qui n'est pas un PKCS#12 (un PEM déposé dans ce champ est signalé explicitement) |
 | Import PKCS#12 : « utilise un algorithme non pris en charge » | bundle produit par un outil ancien (RC2/3DES) ; réexporter en AES/PBES2 ou passer par la méthode PEM |
 | Import PKCS#12 : « ne contient pas de clé privée » | le bundle ne contient qu'un certificat : utiliser la méthode PEM avec la clé séparée |
 | Import refusé : « trop volumineux » | un bundle PKCS#12 fait quelques kilo-octets ; la limite est fixée à 256 Ko |
 
-## 11. Contrôles de recette
+## 14. Contrôles de recette
 
 ```bash
 .venv/bin/python -m pytest tests/ -q                   # suite complète (Python)
 HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
 HUB_SCOPE=public HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
+bash tests/vm/generic-vm-check.sh                      # VM générique isolée (sans helper/Nginx)
 ```
+
+`tests/vm/generic-vm-check.sh` déploie un stack jetable (projet Compose
+`hub-vmcheck`, port 13807, données dans `/tmp`) avec `compose.yaml` seul : il
+vérifie le parcours complet (healthcheck, landing, admin, CRUD, uploads,
+catégories, paramètres, page certificats sans helper), l'absence de sous-réseau
+imposé, l'UID/GID (dont l'erreur explicite si le répertoire de données
+n'appartient pas au bon utilisateur) et le comportement des en-têtes de proxy
+(trusted vs non trusted). La production n'est jamais touchée.
 
 La recette navigateur exige Playwright + Chromium (`requirements-dev.txt`) ; sur
 un poste neuf : `playwright install chromium`. Variables : `HUB_SCOPE`

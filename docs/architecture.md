@@ -9,6 +9,11 @@ surveille aucune des applications qu'il référence.
 
 ## Vue d'ensemble
 
+Le code applicatif est **unique** ; seules les briques d'infrastructure
+changent selon le déploiement. Deux profils sont supportés par le même dépôt.
+
+**Profil A — VPS de production** (Nginx local + helper + Certbot) :
+
 ```
                         Internet / réseau SNS
                                 │
@@ -31,6 +36,39 @@ surveille aucune des applications qu'il référence.
                  │  nginx -t / reload / vérif.  │
                  └──────────────────────────────┘
 ```
+
+**Profil B — VM générique / entreprise** (Docker seul, TLS ailleurs) :
+
+```
+        Utilisateur ── HTTPS ──▶ proxy / LB d'entreprise (certificat)
+                                        │ HTTP interne
+                        ┌───────────────▼──────────────┐
+                        │  Conteneur hub-web           │
+                        │  gunicorn + Flask (uid 1000) │
+                        │  /data (SQLite + uploads)    │
+                        └──────────────────────────────┘
+                        (pas de Nginx, pas de Certbot,
+                         pas de helper : page Certificats
+                         signalée « indisponible »)
+```
+
+## Déploiement : Compose générique + surcharge + variables
+
+| Élément | Rôle | Où |
+|---|---|---|
+| `compose.yaml` | déploiement **générique** : durcissement, healthcheck, image, port, données — aucune valeur propre à une machine | versionné |
+| `compose.vps.yaml` | **surcharge minimale** du VPS : sous-réseau fixé, proxy de confiance local, hostname, socket du helper | versionné |
+| `.env` | valeurs d'installation : `HUB_BIND_IP`, `HUB_PORT`, `HUB_UID/GID`, `HUB_DATA_PATH`, `HUB_TRUSTED_PROXY_CIDRS`, `HUB_TLS_HOSTNAME`, `HUB_BACKUP_DIR`, `COMPOSE_FILE` | local (jamais versionné) |
+| `.env.example` | modèle documenté, sans secret | versionné |
+
+`COMPOSE_FILE` (dans `.env`) sélectionne les fichiers :
+`compose.yaml` seul (générique) ou `compose.yaml:compose.vps.yaml` (VPS).
+
+Conséquence directe : le même commit se déploie `git clone` +
+`docker compose up -d --build` sur n'importe quelle VM Docker, et
+`docker compose -f compose.yaml -f compose.vps.yaml …` sur le VPS. La
+configuration effective du VPS est restée **identique** au passage à cette
+structure (vérifié par comparaison des rendus `docker compose config`).
 
 ## Composants
 

@@ -337,3 +337,81 @@ prochain renouvellement Let's Encrypt — informé dans l'interface et document�
 dans `docs/operations.md`. Le mode PEM existant n'est pas modifié
 (non-régression testée), et l'interface indique clairement la méthode, la limite
 de taille et le traitement du secret.
+
+## D14 — Portabilité : Compose générique, surcharge VPS, configuration par variables (V1.3)
+
+**Contexte.** SNS Hub était déployable, mais sa description d'infrastructure
+(`compose.yaml`) portait cinq valeurs propres au VPS : port publié en loopback,
+hostname `hub.valdev.me`, CIDR du proxy de confiance, source de bind du socket
+helper et **sous-réseau Docker fixé `172.31.244.0/24`** (choisi uniquement pour
+rendre déterministe l'adresse du gateway). Un audit de portabilité a conclu que
+l'application elle-même était portable, mais que ces valeurs empêchaient un
+`git clone` + `docker compose up -d` sur une VM générique — avec un risque de
+conflit de sous-réseau en environnement d'entreprise.
+
+**Décision.** Séparer **infrastructure** et **installation**, sans jamais
+dupliquer le code applicatif ni introduire de notion de « mode » :
+
+- `compose.yaml` devient **générique** : aucune valeur propre à une machine,
+  tout par variables avec valeurs par défaut sûres (`HUB_BIND_IP=127.0.0.1`,
+  `HUB_PORT=13744`, `HUB_UID/GID=1000`, `HUB_DATA_PATH=./runtime/data`,
+  `HUB_TRUSTED_PROXY_CIDRS` vide, `HUB_TLS_HOSTNAME` vide) ; **plus aucun
+  sous-réseau imposé** (Docker attribue le réseau automatiquement) ;
+- `compose.vps.yaml` est une **vraie surcharge minimale** versionnée : sous-réseau
+  fixé, CIDR du proxy local, hostname, socket helper, nom du conteneur. Compose
+  fusionne/déduplique les entrées identiques (port, volume) ;
+- `.env` (jamais versionné) porte la configuration d'installation ; `.env.example`
+  documente les variables, sans secret ;
+- `COMPOSE_FILE` (dans `.env`) sélectionne les fichiers Compose — **un seul**
+  mécanisme de configuration, lu aussi par les scripts hôte (`backup.sh`,
+  `prepare-data-dir.sh`) ;
+- le code Python reste **strictement identique** dans les deux cas : aucune
+  condition sur un « mode » (ni standalone, ni enterprise, ni behind-proxy).
+
+**Alternatives rejetées.** Embarquer un reverse proxy (Caddy/Traefik/Nginx) dans
+le stack : inutile puisque le scénario d'entreprise dominant est le TLS terminé
+par l'infrastructure existante ; un système de profils nommés applicatifs :
+c'est une différence de déploiement, pas de fonctionnalité ; deux fichiers
+Compose complets : duplication et dérive garanties.
+
+**Conséquences.** Le même commit se déploie sur le VPS
+(`COMPOSE_FILE=compose.yaml:compose.vps.yaml`) et sur une VM Docker/Portainer
+(`compose.yaml` seul). La configuration effective du VPS est **restée
+identique** (comparaison des rendus `docker compose config` avant/après
+migration) et la production n'a subi aucune régression. Un nouveau point
+d'exploitation apparaît : le répertoire de données doit appartenir à
+`HUB_UID:HUB_GID` (`scripts/prepare-data-dir.sh`, erreur explicite au démarrage
+sinon).
+
+## D15 — Helper certificat et Certbot optionnels (V1.3)
+
+**Contexte.** Le helper savoir-faire fonctionnait déjà sans Nginx
+(`HUB_CERT_RELOAD_NGINX=0` → activation sans `nginx -t`, sans reload, sans
+vérification du certificat servi), mais deux contraintes d'**infrastructure**
+l'interdisaient en pratique : l'unité systemd imposait `Requires=nginx.service`
+(et `After=`), et `scripts/install-helper.sh` installait le hook Let's Encrypt
+dans `/etc/letsencrypt/renewal-hooks/deploy/` — répertoire inexistant sans
+Certbot, donc échec de l'installation (mode `set -e`).
+
+**Décision.** Rendre les composants hôte réellement optionnels, sans relâcher le
+durcissement :
+
+- unité systemd : `Requires=nginx.service` supprimé, `After=` conservé
+  (ordonnancement pur, sans exigence) ; chemins Nginx du sandbox systemd rendus
+  optionnels (`-/run/nginx.pid`, `-/var/log/nginx`) ; **toutes** les protections
+  conservées (root, `ProtectSystem=strict`, `NoNewPrivileges`,
+  `RestrictAddressFamilies`, `CapabilityBoundingSet`, `MemoryDenyWriteExecute`,
+  `RuntimeDirectory`…) ;
+- `install-helper.sh` : détection de Certbot (`HUB_CERTBOT_HOOK_DIR`), message
+  clair « Certbot non détecté — hook non installé » sans échec, avertissement si
+  Nginx est absent (`HUB_CERT_RELOAD_NGINX=0` requis), échec explicite si
+  systemd manque ;
+- côté application : **rien à changer** — sans socket, `/admin/certificats`
+  affiche « Helper indisponible » (HTTP 200), refuse proprement les imports, et
+  indique que le TLS est peut-être géré par l'infrastructure externe.
+
+**Conséquences.** Trois profils d'exploitation cohérents, sans code applicatif
+conditionnel : VPS (Nginx + helper + Certbot), VM avec helper sans Nginx
+(`HUB_CERT_RELOAD_NGINX=0`), VM sans helper (TLS géré par un proxy). Sur le VPS,
+le comportement observé est inchangé (`nginx -t`, reload, vérification du
+certificat servi, rollback).

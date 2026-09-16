@@ -28,11 +28,17 @@ CSS/JS faits main (pas de framework frontend), Docker Compose.
 - `app/` — l'application web (landing, admin, client du helper certificat).
 - `helper/` — helper **root** d'activation des certificats (service systemd
   durci, socket Unix, validation complète, bascule atomique, `nginx -t`,
-  reload, vérification du certificat servi, rollback).
+  reload, vérification du certificat servi, rollback). **Optionnel** : sans lui
+  (ou avec `HUB_CERT_RELOAD_NGINX=0`), le reste du Hub fonctionne et la page
+  Certificats signale l'indisponibilité.
 - `deploy/` — fichiers d'infrastructure versionnés (unit systemd, env exemple,
-  vhost Nginx de référence, hook certbot).
-- `scripts/` — build, deploy, backup, install-helper.
-- `tests/` — pytest (unitaires/intégration/sécurité) + recette navigateur.
+  vhost Nginx du VPS, **exemple Nginx générique**, hook certbot).
+- `compose.yaml` (générique) + `compose.vps.yaml` (surcharge du VPS) + `.env`
+  (local, non versionné) : toute la configuration d'infrastructure.
+- `scripts/` — build, deploy, backup, install-helper, prepare-data-dir,
+  save/load-image (hors ligne).
+- `tests/` — pytest (unitaires/intégration/sécurité/portabilité) + recette
+  navigateur + recettes hôte dans `tests/vm/`.
 - `docs/` — architecture, décisions, état, exploitation.
 
 Détails : `docs/architecture.md`.
@@ -53,7 +59,7 @@ Détails : `docs/architecture.md`.
 | Lecture des bundles certificat (PKCS#12/PFX, DER) | `app/certparse.py` (en mémoire) |
 | Validation/activation TLS | `helper/hub_certctl.py` (une seule implémentation) |
 | Service privilégié | `helper/hub_cert_helper.py` + `deploy/hub-cert-helper.service` |
-| Déploiement | `compose.yaml` + `scripts/build.sh` + `scripts/deploy.sh` |
+| Déploiement | `compose.yaml` (générique) + `compose.vps.yaml` (surcharge) + `scripts/build.sh` + `scripts/deploy.sh` |
 
 Ne pas créer un second chemin pour une responsabilité déjà couverte (par
 exemple : installer un certificat sans passer par `hub_certctl`, ou écrire
@@ -61,27 +67,40 @@ directement dans `/var/lib/hub/certificates/active`).
 
 ## Données et persistance
 
-- `runtime/data/hub.sqlite` (catalogue, catégories, sessions, admin, verrouillages) ;
-- `runtime/data/uploads/` (screenshots, noms `uuid.webp|png|jpg`) ;
-- `runtime/data/.secret_key` (signature des sessions, 0600) ;
+- répertoire de données = `HUB_DATA_PATH` (défaut `./runtime/data`) :
+  `hub.sqlite` (catalogue, catégories, sessions, admin, verrouillages),
+  `uploads/` (screenshots, noms `uuid.webp|png|jpg`),
+  `.secret_key` (signature des sessions, 0600) ;
 - `/var/lib/hub/certificates/` (générations TLS + lien `active`, root-only).
 
-`runtime/` est **hors Git**. Le conteneur tourne en lecture seule ; seuls
+`runtime/` est **hors Git**. Le répertoire de données doit appartenir à
+`HUB_UID:HUB_GID` (`sudo scripts/prepare-data-dir.sh`), sinon le démarrage
+échoue avec un message explicite. Le conteneur tourne en lecture seule ; seuls
 `/data` (bind mount) et `/tmp` (tmpfs) sont inscriptibles.
 
 ## Docker
 
-- `compose.yaml` est **canonique** (dépôt = source de vérité) ; le build part de
-  la racine du dépôt. Pas de second Compose, pas de clone de production, pas de
-  stack Portainer dupliquée (Portainer reste un outil d'observation).
-- Sous-réseau fixé `172.31.244.0/24` : le gateway `172.31.244.1` est le seul
-  proxy de confiance (variable `HUB_TRUSTED_PROXY_CIDRS`).
+- `compose.yaml` est **canonique, générique et portable** : aucune valeur propre
+  à une machine, tout par variables (`HUB_BIND_IP`, `HUB_PORT`, `HUB_UID/GID`,
+  `HUB_DATA_PATH`, `HUB_TRUSTED_PROXY_CIDRS`, `HUB_TLS_HOSTNAME`,
+  `HUB_CONTAINER_NAME`, `HUB_IMAGE_TAG`) avec défauts sûrs. Pas de sous-réseau
+  imposé (réseau Docker automatique).
+- `compose.vps.yaml` est la **surcharge du VPS** (sous-réseau fixé
+  `172.31.244.0/24`, gateway `172.31.244.1` comme seul proxy de confiance,
+  hostname, socket helper). `COMPOSE_FILE` (dans `.env`) sélectionne les
+  fichiers : `compose.yaml` seul (générique) ou
+  `compose.yaml:compose.vps.yaml` (VPS).
+- Le build part de la racine du dépôt ; pas de clone de production, pas de stack
+  Portainer dupliquée non versionnée (Portainer déploie le même `compose.yaml`).
 - Le build injecte `HUB_GIT_SHA` (affiché dans l'admin) et les labels OCI.
 
 ## Nginx
 
 Site dédié `/etc/nginx/sites-available/hub.valdev.me` (copie de référence dans
-`deploy/nginx/`). L'allowlist IP globale du VPS est **incluse** (pas recopiée) ;
+`deploy/nginx/`). `deploy/nginx/hub-generic.conf.example` est l'exemple **portable** (placeholders
+HOSTNAME/UPSTREAM/CERT_PATH/KEY_PATH, sans Certbot ni allowlist) ; le vhost du
+VPS reste la référence de production. L'allowlist IP globale du VPS est
+**incluse** (pas recopiée) ;
 le loopback est autorisé pour les vérifications sur le VPS. TLS servi depuis
 `/var/lib/hub/certificates/active/`. Toute modification Nginx passe par
 `nginx -t` puis reload, sous le verrou infra partagé quand on touche à
@@ -92,20 +111,31 @@ l'infrastructure partagée.
 ```bash
 ./scripts/deploy.sh                     # déploiement (commit poussé requis)
 sudo ./scripts/backup.sh                # sauvegarde complète
+sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
 sudo scripts/install-helper.sh          # (ré)installation du helper cert root
 .venv/bin/python -m pytest tests/ -q    # suite de tests
+bash tests/vm/generic-vm-check.sh       # recette « nouvelle VM » (isolée)
+sudo bash tests/vm/helper-check.sh      # helper avec/sans Nginx (bac à sable)
 docker compose logs -f web              # logs applicatifs
 docker compose exec web python -m app.manage reset-admin
 ```
 
 ## Tests
 
-- `tests/` : 205 tests pytest (validation d'entrées, uploads, auth, CRUD,
+- `tests/` : 227 tests pytest (validation d'entrées, uploads, auth, CRUD,
   catégories, migration, thème, bundles PKCS#12/PFX et DER, landing, sécurité,
-  certificats/rollback, intégration app ↔ helper par socket).
+  certificats/rollback, intégration app ↔ helper par socket, configuration de
+  déploiement : Compose générique/surcharge, durcissement systemd, portabilité).
 - `tests/browser/acceptance.py` : recette navigateur réelle (desktop, mobile,
   admin) via Playwright.
 - `tests/browser/capture_apps.py` : captures des applications pour le catalogue.
+- `tests/vm/generic-vm-check.sh` : recette « VM générique » isolée (projet
+  Compose jetable, sans Nginx/Certbot/helper) — healthcheck, landing, admin,
+  CRUD, uploads, catégories, paramètres, page certificats, réseau, UID/GID,
+  en-têtes de proxy.
+- `tests/vm/helper-check.sh` : activation du helper **sans Nginx**
+  (`HUB_CERT_RELOAD_NGINX=0`), refus propre + absence de bascule en mode
+  `reload=1` sans Nginx, socket + `SO_PEERCRED`, unité systemd.
 
 ## Règles Git
 
@@ -126,8 +156,10 @@ docker compose exec web python -m app.manage reset-admin
 ## Zones à ne pas modifier sans raison
 
 - `helper/hub_certctl.py` (invariants d'activation et de rollback) ;
-- `deploy/hub-cert-helper.service` (durcissement systemd) ;
-- `compose.yaml` (durcissement du conteneur, sous-réseau, points de montage) ;
+- `deploy/hub-cert-helper.service` (durcissement systemd — l'absence de
+  `Requires=nginx.service` et les chemins Nginx préfixés `-` sont **volontaires**) ;
+- `compose.yaml` (durcissement du conteneur, points de montage) et
+  `compose.vps.yaml` (sous-réseau, proxy de confiance du VPS) ;
 - l'ordre des règles d'accès dans le vhost Nginx (loopback puis allowlist).
 
 ## Conventions
