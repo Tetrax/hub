@@ -227,3 +227,69 @@ visible ; aucun coût serveur ni dépendance d'image en production.
 
 **Conséquences.** Le catalogue stocke des `.webp` ; un PNG/JPEG reste accepté à
 tout moment via l'admin.
+
+---
+
+## D11 — Catégories : entité en base, migration versionnée, repli protégé (V1.1)
+
+**Contexte.** En V1, `apps.category` était un texte libre (avec suggestions) :
+impossible de renommer une catégorie partout, de voir son usage, de la
+supprimer proprement ou de contrôler l'ordre des filtres publics.
+
+**Décision.** Table `categories` (nom, slug unique insensible à la casse,
+position, `is_fallback`) et `apps.category_id` en clé étrangère `NOT NULL`.
+Migration `user_version` 1 → 2, **transactionnelle et idempotente**, exécutée au
+démarrage : elle crée les catégories à partir des textes existants (regroupés
+sans tenir compte de la casse ni des espaces), garantit l'existence d'une
+catégorie de repli et reconstruit la table `apps` sans perte d'identifiants,
+d'images, de positions ni de visibilité.
+
+La catégorie de repli « Autres » ne peut **ni être supprimée ni être renommée** :
+elle est le point d'atterrissage de toute suppression de catégorie utilisée et
+garantit qu'aucune application ne se retrouve sans catégorie. Supprimer une
+catégorie utilisée exige une réassignation explicite (écran de confirmation qui
+liste les applications concernées).
+
+**Alternatives.** Garder le texte et « gérer » les catégories par convention :
+aucune garantie d'intégrité, renommage partiel. Table de liaison N-N : complexité
+inutile, une application n'a qu'une catégorie. Suppression avec `ON DELETE SET
+NULL` : autoriserait des applications orphelines.
+
+**Conséquences.** Les filtres publics sont générés par la base (une catégorie
+vide, ou utilisée uniquement par des applications masquées, n'apparaît pas) ;
+l'ordre des filtres suit l'ordre administré. Sauvegarde de la base effectuée
+avant la migration de production ; le slug sert aux URLs (`/?category=fortinet`).
+
+---
+
+## D12 — Thème clair/sombre : tokens, choix explicite prioritaire, aucun flash (V1.1)
+
+**Contexte.** La DA sombre est validée et ne doit pas être redessinée ; il faut
+un mode clair réel (portail **et** administration), persistant, respectant la
+préférence système à la première visite, sans flash au chargement.
+
+**Décision.** Un seul jeu de *design tokens* sémantiques (`--bg-*`, `--panel*`,
+`--border`, `--text`, `--muted*`, `--rose*`, états, médias, héros, logo) dont les
+valeurs par défaut sont la palette sombre de référence. Le thème clair est un
+second jeu de valeurs appliqué soit par `data-theme="light"` (choix explicite),
+soit par `prefers-color-scheme: light` quand aucun choix n'existe. Aucun
+composant ne code une couleur en dur, et la feuille n'est pas dupliquée.
+
+Le choix est mémorisé en `localStorage` (aucun stockage serveur, donc aucun
+cookie ni donnée personnelle), et appliqué par un script **externe** chargé dans
+`<head>` avant la feuille de styles : pas de flash, et la CSP reste stricte
+(`script-src 'self'`, aucun script inline). Un bouton discret dans l'en-tête
+(soleil/lune, `aria-label` dynamique) bascule le thème sur le portail comme dans
+l'administration ; il fonctionne dès la page de connexion.
+
+**Alternatives.** Deux feuilles de styles (ou `@media` dupliqués) : maintenance
+double. Script inline dans `<head>` : imposerait `'unsafe-inline'` ou un nonce
+dans la CSP. Thème stocké côté serveur : complexité et données inutiles pour un
+réglage purement visuel. `light-dark()` : élégant mais redondant avec des tokens
+déjà explicites, et le repli multi-navigateurs aurait dupliqué les palettes.
+
+**Conséquences.** Ajouter une couleur = ajouter un token (et sa valeur claire si
+elle diffère) ; les deux blocs clairs doivent rester identiques (vérifié par un
+test). Les captures d'écran des applications ne sont pas retouchées : seuls leurs
+conteneurs et liserés s'adaptent au thème. `prefers-reduced-motion` reste
+respecté.

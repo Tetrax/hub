@@ -22,6 +22,14 @@ aucune requête vers elles.
 - Administration : CRUD des applications, ordre d'affichage, masquage immédiat,
   téléversement de screenshots (PNG/JPEG/WebP, validés par magic bytes),
   paramètres du portail, rotation du mot de passe.
+- Catégories administrables (V1.1) : entité en base avec usage, ordre d'affichage,
+  renommage, création rapide depuis le formulaire d'une application et
+  suppression sûre (réassignation obligatoire ; repli « Autres » protégé). Les
+  filtres du portail en découlent automatiquement.
+- Thème clair / sombre (V1.1) : bascule discrète sur le portail et dans
+  l'administration, choix mémorisé par navigateur, préférence système respectée
+  à la première visite, aucun flash au chargement. La direction artistique
+  sombre reste la référence.
 - Gestion du certificat TLS : état complet de la paire active et remplacement
   en deux temps (valider puis activer) avec bascule atomique, `nginx -t`,
   rechargement, vérification du certificat réellement servi et rollback.

@@ -41,15 +41,35 @@ surveille aucune des applications qu'il référence.
 - **gunicorn** (2 workers, 4 threads) sert l'application sur `0.0.0.0:8000`
   dans le conteneur ; le port n'est publié qu'en loopback (`127.0.0.1:13744`).
 - **SQLite** (mode WAL) pour le catalogue, les sessions, le compte admin et les
-  tentatives de connexion ; **uploads** de screenshots sur disque.
+  tentatives de connexion ; **uploads** de screenshots sur disque. Schéma
+  versionné (`PRAGMA user_version`) et migré automatiquement au démarrage.
 - Modules : `views_public.py` (landing, images, `/healthz`), `views_admin.py`
   (CRUD catalogue, paramètres, session), `views_cert.py` (parcours certificat),
   `certclient.py` + `hub_cert_protocol.py` (client du helper), `security.py`
   (en-têtes, frontière proxy, origine), `auth.py` (scrypt, sessions, CSRF,
   verrouillage), `uploads.py` (validation par magic bytes), `urls.py`
-  (validation d'entrées), `manage.py` (CLI d'exploitation).
+  (validation d'entrées), `manage.py` (CLI d'exploitation). `catalog.py` porte
+  aussi les catégories (CRUD, ordre, réassignation).
 
-### 2. Helper certificat (`helper/`, root)
+### 2. Modèle de données
+
+```
+categories(id, name, slug UNIQUE NOCASE, position, is_fallback, created_at, updated_at)
+apps(id, slug UNIQUE NOCASE, name, description, url, image,
+     category_id → categories(id) NOT NULL, position, enabled, status,
+     created_at, updated_at)
+settings(key, value) · admin_users · sessions · login_attempts · cert_validations
+```
+
+- Une application appartient à **une** catégorie (clé étrangère, `NOT NULL`) ;
+  une catégorie peut n'être utilisée par aucune application.
+- `is_fallback = 1` désigne la catégorie de repli (« Autres ») : non supprimable,
+  non renommable ; elle recueille les applications d'une catégorie supprimée.
+- Schéma versionné par `PRAGMA user_version` ; migration 1 → 2 transactionnelle
+  et idempotente, déclenchée par `db.init_db()` au démarrage : aucune
+  application, association, position, image ou visibilité n'est perdue.
+
+### 3. Helper certificat (`helper/`, root)
 
 Service systemd `hub-cert-helper.service`, durci (ProtectSystem=strict,
 NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
@@ -69,7 +89,7 @@ NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
   `openssl s_client` avec SNI) → **rollback automatique** (ancienne génération
   restaurée + reload) si une étape échoue.
 
-### 3. Nginx (hôte)
+### 4. Nginx (hôte)
 
 - Site dédié `hub.valdev.me` : port 80 (redirection + `/.well-known/acme-challenge`
   ouvert pour Let's Encrypt), port 443 (proxy inverse + TLS).
@@ -81,7 +101,7 @@ NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
   `/var/lib/hub/certificates/active/{fullchain,privkey}.pem` (paire gérée).
 - Copie versionnée de référence : `deploy/nginx/hub.valdev.me.conf`.
 
-### 4. Données persistantes
+### 5. Données persistantes
 
 | Donnée | Emplacement hôte | Conteneur | Sauvegarde |
 |---|---|---|---|
@@ -125,6 +145,25 @@ puis hook de déploiement `/etc/letsencrypt/renewal-hooks/deploy/hub`, qui
 rappelle le helper (`renew`) : même validation, même activation atomique, même
 rollback que le parcours web — nginx ne lit jamais directement la lignée Certbot.
 
+### Catégories et filtres publics
+
+Les filtres de la landing page sont générés par les catégories comptant au moins
+une **application affichée**, dans l'ordre administré. Une catégorie vide (ou
+utilisée uniquement par des applications masquées) n'apparaît pas. Le filtre
+passe par le slug (`/?category=fortinet`) ; la page fonctionne sans JavaScript
+(liens GET), le filtrage instantané n'étant qu'une amélioration progressive.
+
+### Thème clair / sombre
+
+Un seul fichier CSS, deux jeux de valeurs de *tokens* (sombre = référence
+visuelle, clair = second jeu). Le thème actif vient de `data-theme` sur `<html>`
+(choix explicite de l'utilisateur, mémorisé en `localStorage`) ou, à défaut, de
+`prefers-color-scheme` (première visite). `theme-init.js`, script externe chargé
+dans `<head>` **avant** la feuille de styles, applique le choix mémorisé avant le
+premier rendu : aucun flash, et la CSP reste stricte (`script-src 'self'`, aucun
+script inline). La bascule est disponible sur le portail comme dans
+l'administration, y compris sur la page de connexion.
+
 ## Contraintes de sécurité
 
 - Aucun secret dans Git ni dans l'image ; `runtime/` et `.env` sont ignorés.
@@ -143,3 +182,4 @@ rollback que le parcours web — nginx ne lit jamais directement la lignée Cert
 
 Pas d'orchestrateur, pas de proxy applicatif, pas de monitoring, pas de CMDB,
 pas de gestion des comptes des autres applications, pas de microservices.
+

@@ -68,7 +68,59 @@ docker compose exec web python -m app.manage reset-admin
 # puis téléversement : /admin/applications → modifier → screenshot
 ```
 
-## 4. Certificat TLS
+## 4. Catégories
+
+- Gestion dans `/admin/categories` : créer, renommer (champ + « Renommer »),
+  réordonner (↑/↓, ordre des filtres du portail), voir l'usage
+  (« N applications »), supprimer.
+- **Suppression** : une catégorie vide se supprime directement (confirmation).
+  Une catégorie utilisée ouvre un écran de confirmation qui liste les
+  applications concernées et exige une **réassignation** explicite (par défaut
+  vers « Autres ») : aucune application ne peut se retrouver sans catégorie.
+- **Catégorie de repli** (« Autres », `is_fallback = 1`) : non supprimable et non
+  renommable — c'est le point d'atterrissage des réassignations.
+- Depuis le formulaire d'une application, « + Nouvelle catégorie » crée la
+  catégorie sans quitter la page (JavaScript requis ; sans JS, passer par
+  `/admin/categories`).
+- Sur le portail, n'apparaissent que les catégories comptant au moins une
+  application affichée.
+
+## 5. Migration de base de données
+
+Le schéma est versionné (`PRAGMA user_version`) et migré **automatiquement** au
+démarrage du conteneur (`db.init_db`) :
+
+- migration `1 → 2` (V1.1) : `apps.category` (texte) → `categories` +
+  `apps.category_id` (clé étrangère `NOT NULL`) ;
+- transactionnelle (aucun état partiel), idempotente (relançable sans effet) et
+  sans perte : identifiants, slugs, images, positions, visibilité et statuts des
+  applications sont conservés ; les variantes de casse/espaces sont fusionnées.
+
+En production, **prendre une sauvegarde avant** toute montée de version
+(`sudo ./scripts/backup.sh`) : elle contient la base pré-migration. Pour rejouer
+une migration sur une copie :
+
+```bash
+cp runtime/data/hub.sqlite /tmp/copie.sqlite
+.venv/bin/python -c "from app import db; db.init_db('/tmp/copie.sqlite')"
+.venv/bin/python -c "import sqlite3; c=sqlite3.connect('/tmp/copie.sqlite'); \
+print(c.execute('PRAGMA user_version').fetchone()); print(c.execute('SELECT name FROM categories').fetchall())"
+```
+
+## 6. Thème clair / sombre
+
+- Aucune exploitation : le choix est stocké par navigateur (`localStorage`),
+  jamais côté serveur ; rien à purger ni à sauvegarder.
+- Comportement : sans choix mémorisé, le thème suit `prefers-color-scheme` ;
+  un clic sur la bascule fixe le choix pour ce navigateur.
+- Vérification : `--bg-top` vaut `#0b0b0d` en sombre et `#f6f6f8` en clair
+  (la recette navigateur contrôle les deux, la persistance et l'absence de
+  flash).
+- Ajouter une couleur = ajouter un token dans `app/static/css/hub.css` (valeur
+  sombre par défaut, valeur claire dans les deux blocs clairs — ils doivent
+  rester identiques, un test le vérifie).
+
+## 7. Certificat TLS
 
 ### Consulter / remplacer
 
@@ -105,7 +157,7 @@ Le renouvellement réel se déclenche ~30 jours avant l'expiration ; il
 re-valide la paire et recharge Nginx via le helper (jamais d'écriture directe
 dans `active/`).
 
-## 5. Sauvegarde et restauration
+## 8. Sauvegarde et restauration
 
 ```bash
 sudo ./scripts/backup.sh                 # /home/tetrax/backups/hub/ (10 archives conservées)
@@ -132,7 +184,7 @@ Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 (le lien `active` est inclus) puis `sudo nginx -t && sudo systemctl reload nginx`
 (sous le verrou infra si d'autres changements nginx sont en cours).
 
-## 6. Reconstruction complète (reprise sur une nouvelle machine)
+## 9. Reconstruction complète (reprise sur une nouvelle machine)
 
 1. Cloner `https://github.com/Tetrax/hub` dans `/home/tetrax/workspace/hub` ;
 2. `sudo install -d -o 1000 -g 1000 -m 0755 runtime/data runtime/data/uploads` ;
@@ -144,7 +196,7 @@ Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 6. `./scripts/deploy.sh` ou `HUB_IMAGE_TAG=<sha> docker compose up -d --no-build` ;
 7. restaurer la sauvegarde (section 5) si nécessaire.
 
-## 7. Dépannage
+## 10. Dépannage
 
 | Symptôme | Piste |
 |---|---|
@@ -156,12 +208,15 @@ Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 | Renouvellement certbot en échec | `sudo certbot renew --cert-name hub.valdev.me --dry-run -v` ; vérifier la location `acme-challenge` du vhost |
 | Session admin perdue après mise à jour | la clé de signature vit dans `runtime/data/.secret_key` — vérifier sa présence (0600) |
 
-## 8. Contrôles de recette
+## 11. Contrôles de recette
 
 ```bash
-.venv/bin/python -m pytest tests/ -q                   # suite complète
+.venv/bin/python -m pytest tests/ -q                   # suite complète (Python)
 HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
+HUB_SCOPE=public HUB_BASE_URL=http://127.0.0.1:13744 .venv/bin/python tests/browser/acceptance.py
 ```
 
 La recette navigateur exige Playwright + Chromium (`requirements-dev.txt`) ; sur
-un poste neuf : `playwright install chromium`.
+un poste neuf : `playwright install chromium`. Variables : `HUB_SCOPE`
+(`full` / `public`), `HUB_ADMIN_PASSWORD` (compte existant), `HUB_SKIP_CERT`
+(instance locale sans helper), `HUB_SHOTS_DIR` (captures de validation).

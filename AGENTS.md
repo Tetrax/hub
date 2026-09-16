@@ -42,6 +42,9 @@ Détails : `docs/architecture.md`.
 | Responsabilité | Mécanisme autoritatif |
 |---|---|
 | Catalogue (CRUD, ordre, visibilité) | `app/views_admin.py` + `app/catalog.py` |
+| Catégories (CRUD, ordre, réassignation) | `app/catalog.py` (`categories`) |
+| Migration de schéma (`user_version`) | `app/db.py` (`init_db`) |
+| Thème clair/sombre (tokens, bascule) | `app/static/css/hub.css` + `theme-init.js`/`hub.js` |
 | Screenshots (validation, stockage) | `app/uploads.py` (magic bytes, noms uuid) |
 | Authentification admin | `app/auth.py` (scrypt, sessions SQLite, CSRF, verrouillage) |
 | En-têtes de sécurité / frontière proxy | `app/security.py` |
@@ -57,7 +60,7 @@ directement dans `/var/lib/hub/certificates/active`).
 
 ## Données et persistance
 
-- `runtime/data/hub.sqlite` (catalogue, sessions, admin, verrouillages) ;
+- `runtime/data/hub.sqlite` (catalogue, catégories, sessions, admin, verrouillages) ;
 - `runtime/data/uploads/` (screenshots, noms `uuid.webp|png|jpg`) ;
 - `runtime/data/.secret_key` (signature des sessions, 0600) ;
 - `/var/lib/hub/certificates/` (générations TLS + lien `active`, root-only).
@@ -96,8 +99,9 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 127 tests pytest (validation d'entrées, uploads, auth, CRUD,
-  landing, sécurité, certificats/rollback, intégration app ↔ helper par socket).
+- `tests/` : 171 tests pytest (validation d'entrées, uploads, auth, CRUD,
+  catégories, migration, thème, landing, sécurité, certificats/rollback,
+  intégration app ↔ helper par socket).
 - `tests/browser/acceptance.py` : recette navigateur réelle (desktop, mobile,
   admin) via Playwright.
 - `tests/browser/capture_apps.py` : captures des applications pour le catalogue.
@@ -129,7 +133,11 @@ docker compose exec web python -m app.manage reset-admin
 
 - Français pour l'UI, la documentation et les commits ; identifiants en anglais.
 - Pas de framework CSS/JS ; progressive enhancement (le site fonctionne sans JS).
-- Styles : palette SNS (`#0B0B0D`, `#141417`, `#F4A8C9`, `#FED2F2`, `#ECECEE`).
+- Styles : palette SNS (`#0B0B0D`, `#141417`, `#F4A8C9`, `#FED2F2`, `#ECECEE`),
+  **uniquement** via les tokens de `hub.css` (thème sombre = valeurs par défaut,
+  thème clair = second jeu, les deux blocs clairs doivent rester identiques).
+- Catégories : entité en base (`categories`), jamais de texte libre dans `apps` ;
+  le repli « Autres » est protégé (ni suppression ni renommage).
 - Erreurs : messages compréhensibles côté UI, détails uniquement dans les logs.
 
 ## Principe directeur
