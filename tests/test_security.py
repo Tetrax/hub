@@ -59,6 +59,45 @@ def test_login_cookie_secure_behind_https(app, client):
     assert "Secure" in response.headers.get("Set-Cookie", "")
 
 
+def test_preauth_cookie_secure_only_behind_trusted_https(app, client):
+    """Le cookie de session Flask (pré-authentification) suit le schéma détecté."""
+    setup_admin(client, app)  # sans admin, /admin/login redirige vers /admin/setup
+    # Client neuf (aucun cookie) : HTTP local → cookie posé, mais sans Secure
+    # (le login doit rester utilisable en HTTP interne).
+    fresh = app.test_client()
+    cookie = fresh.get("/admin/login").headers.get("Set-Cookie", "")
+    assert cookie, "un cookie de session Flask est attendu"
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    assert "Secure" not in cookie
+
+    # Proxy de confiance déclarant HTTPS → cookie Secure.
+    fresh_https = app.test_client()
+    response = fresh_https.get("/admin/login", headers={"X-Forwarded-Proto": "https"})
+    assert "Secure" in response.headers.get("Set-Cookie", "")
+
+
+def test_preauth_cookie_not_secure_from_untrusted_proxy(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    application = create_app(
+        {
+            "DATA_DIR": data_dir,
+            "DB_PATH": data_dir / "hub.sqlite",
+            "UPLOADS_DIR": data_dir / "uploads",
+            "SECRET_KEY_FILE": data_dir / ".secret_key",
+            "TLS_HOSTNAME": "hub.valdev.me",
+            "CERT_HELPER_SOCKET": str(tmp_path / "absent.sock"),
+            "TRUSTED_PROXY_CIDRS": "192.0.2.0/24",  # 127.0.0.1 n'est pas de confiance
+        }
+    )
+    application.config.update(TESTING=True)
+    setup_admin(application.test_client(), application)
+    fresh = application.test_client()
+    response = fresh.get("/admin/login", headers={"X-Forwarded-Proto": "https"})
+    cookie = response.headers.get("Set-Cookie", "")
+    assert cookie and "Secure" not in cookie
+
+
 def test_error_page_has_no_internals(app, client):
     body = client.get("/introuvable").get_data(as_text=True)
     assert "404" in body
