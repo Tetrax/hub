@@ -227,6 +227,31 @@ def main() -> int:
             if admin_ready:
                 check("Tableau de bord accessible", "Tableau de bord" in page.content())
 
+                # --- Sécurité (V1.6) : section admin, état et navigation -----------
+                page.goto(f"{BASE_URL}/admin/security", wait_until="networkidle")
+                security_content = page.content()
+                check(
+                    "Sécurité : section accessible avec ses actions",
+                    "Sécurité" in security_content
+                    and "Synchroniser maintenant" in security_content
+                    and "Alertes sécurité image" in security_content,
+                )
+                check(
+                    "Sécurité : état explicite quand aucun rapport n'est ingéré",
+                    "État de l'image" in security_content,
+                    "la surveillance est désactivée par défaut",
+                )
+                check(
+                    "Sécurité : lien présent dans la navigation admin",
+                    page.locator("a[href='/admin/security']").count() >= 1,
+                )
+                page.screenshot(path=str(SHOTS_DIR / "hub-admin-security.png"))
+                page.goto(f"{BASE_URL}/admin/security/vulnerabilities", wait_until="networkidle")
+                check(
+                    "Sécurité : page des vulnérabilités rendue",
+                    "Vulnérabilités de l'image" in page.content(),
+                )
+
         # --- Thème : comportement sombre / clair / préférence système ----------
         theme_dark = browser.new_context(
             viewport={"width": 1440, "height": 900}, locale="fr-FR", color_scheme="dark"
