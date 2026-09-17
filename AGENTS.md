@@ -59,6 +59,7 @@ Détails : `docs/architecture.md`.
 | Thème clair/sombre (tokens, bascule) | `app/static/css/hub.css` + `theme-init.js`/`hub.js` |
 | Vues du catalogue (Cartes/Liste, préférence) | `app/templates/index.html` + `hub.js` + `catalog-view-init.js` + `hub.css` |
 | Branding du header (libellé) | `app/config.py` (`HUB_BRAND_LABEL`) + `app/templates/base.html` |
+| Contrôle de sécurité de l'image (CI) | `.github/workflows/ci.yml` (Trivy, informatif) + `scripts/trivy_report.py` (résumé) |
 | Screenshots (validation, stockage) | `app/uploads.py` (magic bytes, noms uuid) |
 | Authentification admin | `app/auth.py` (scrypt, sessions SQLite, CSRF, verrouillage) |
 | En-têtes de sécurité / frontière proxy | `app/security.py` |
@@ -126,6 +127,7 @@ l'infrastructure partagée.
 
 ```bash
 ./scripts/deploy.sh                     # déploiement (commit poussé requis)
+gh workflow run ci.yml                   # scan de sécurité manuel (GitHub Actions)
 docker compose exec web python -m app.manage seed   # catalogue initial (installation neuve)
 bash tests/vm/standalone-check.sh       # recette standalone TLS direct (isolée)
 sudo ./scripts/backup.sh                # sauvegarde complète
@@ -140,11 +142,17 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 330 tests pytest (validation d'entrées, uploads, auth, CRUD,
+- `tests/` : 355 tests pytest (validation d'entrées, uploads, auth, CRUD,
   catégories, migration, thème, branding (`HUB_BRAND_LABEL`), vues du catalogue
   (Cartes/Liste), bundles PKCS#12/PFX et DER, landing, sécurité,
   certificats/rollback, intégration app ↔ helper par socket, configuration de
-  déploiement : Compose générique/surcharge, durcissement systemd, portabilité).
+  déploiement : Compose générique/surcharge, durcissement systemd, portabilité,
+  rendu du rapport Trivy et invariants de la CI).
+- `.github/workflows/ci.yml` : job `tests` (pytest, bloquant) puis job
+  `security-scan` (Trivy **informatif** sur l'image réelle — HIGH/CRITICAL
+  corrigibles, artefact `trivy-report`, scan quotidien de `main` à 05:23 UTC,
+  lancement manuel `gh workflow run ci.yml`) ; politique et exploitation dans
+  `docs/operations.md` §15, décision D21.
 - `tests/browser/acceptance.py` : recette navigateur réelle (desktop, mobile,
   admin, thèmes, vues Cartes/Liste) via Playwright.
 - `tests/browser/capture_apps.py` : captures des applications pour le catalogue.
@@ -187,7 +195,10 @@ docker compose exec web python -m app.manage reset-admin
 - l'ordre des règles d'accès dans le vhost Nginx (loopback puis allowlist) ;
 - `compose.standalone.yaml` : **un seul service applicatif** et aucun proxy — le
   conteneur termine lui-même TLS (voir D16) ; `app/certlocal.py` n'envoie jamais
-  de signal à un processus non identifié par le fichier PID du serveur.
+  de signal à un processus non identifié par le fichier PID du serveur ;
+- `.github/workflows/ci.yml` : le scan Trivy est **informatif** (`exit-code: 0`)
+  — un finding ne doit pas casser la CI (politique assumée, voir D21) ; Trivy
+  n'est jamais installé dans l'image, le runtime, le VPS ou Portainer.
 
 ## Conventions
 

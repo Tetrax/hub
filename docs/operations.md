@@ -608,3 +608,43 @@ un poste neuf : `playwright install chromium`. Variables : `HUB_SCOPE`
 (instance locale ou certificat non vérifiable), `HUB_HOST_RESOLVER` (règle de
 résolution Chromium, ex. `MAP hub.intra.example 127.0.0.1`), `HUB_SHOTS_DIR`
 (captures de validation).
+
+## 15. Contrôle de sécurité de l'image (Trivy, CI)
+
+Trivy vit **uniquement dans GitHub Actions** (`.github/workflows/ci.yml`, job
+`security-scan`) : jamais dans l'image, le runtime, le VPS, la VM entreprise ou
+Portainer, et aucun secret n'est nécessaire.
+
+- **Ce qui est scanné** : l'image réellement produite par le `Dockerfile` du
+  dépôt, construite par la CI sans être poussée ; paquets OS (Debian) **et**
+  bibliothèques Python embarquées.
+- **Filtre** : sévérité `HIGH,CRITICAL`, et uniquement les vulnérabilités
+  **corrigibles** (`ignore-unfixed: true`) — pas d'alerte sans action possible.
+- **Politique** : le scan est **informatif** (`exit-code: 0`) — un finding ne
+  fait jamais échouer le run. Les contrôles bloquants restent la suite pytest et
+  la construction d'image (voir D21).
+- **Déclencheurs** : `push` sur `main`, `pull_request`, scan **quotidien** de
+  `main` à **05:23 UTC** (07:23 Paris — volontairement distinct de FortiUpgrade)
+  et lancement manuel.
+- **Où lire le résultat** : onglet *Actions* → run `CI` → job
+  `security-scan` : (1) résumé d'étape (compteurs CRITICAL/HIGH, paquets,
+  versions installées et corrigées, CVE) ; (2) annotation `::warning::` globale
+  sur le run ; (3) artefact **`trivy-report`** (`trivy.json`, conservé
+  30 jours), téléchargeable depuis la page du run.
+- **Lancement manuel** (vérifier une nouvelle CVE sans pousser de commit) :
+
+```bash
+gh workflow run ci.yml            # puis : gh run list --workflow=ci.yml
+```
+
+- **Traiter un finding** : privilégier le correctif réel — rafraîchir le digest
+  de l'image de base dans `Dockerfile` (`FROM python:3.12-slim@sha256:…` après
+  vérification que le nouveau digest embarque les versions corrigées) ou mettre à
+  jour la dépendance épinglée dans `requirements.txt` ; reconstruire, rejouer la
+  suite, puis déployer selon le workflow habituel (§1). Un finding est un
+  signal, pas une urgence : rien ne se redéploie automatiquement.
+- **Rapport absent/illisible** : le résumé l'indique explicitement
+  (« rapport indisponible ») et le run reste vert — ce n'est **jamais** présenté
+  comme « aucune vulnérabilité ».
+- **Bon à savoir** : GitHub désactive les workflows planifiés après 60 jours
+  sans activité du dépôt — un push (ou un run manuel) suffit à les réactiver.

@@ -106,6 +106,25 @@ playwright install chromium   # une seule fois par poste
 HUB_BASE_URL=http://127.0.0.1:8000 .venv/bin/python tests/browser/acceptance.py
 ```
 
+## Intégration continue (GitHub Actions)
+
+`.github/workflows/ci.yml` — déclenché par `push` sur `main`, `pull_request`,
+un scan quotidien de `main` (05:23 UTC) et un lancement manuel
+(`workflow_dispatch`) :
+
+| Job | Rôle | Bloquant |
+|---|---|---|
+| `tests` | suite pytest complète (Python 3.12) | **oui** |
+| `security-scan` | construction de l'image réelle (aucun push) puis **scan Trivy** — paquets OS + bibliothèques Python, sévérité `HIGH,CRITICAL`, `ignore-unfixed: true` (uniquement les vulnérabilités corrigibles) | **non** — contrôle informatif |
+
+Le scan **ne fait jamais échouer le run** (`exit-code: 0`) : les résultats sont
+publiés dans le résumé d'étape, une annotation globale et l'artefact
+`trivy-report` (`trivy.json`, 30 jours). Un rapport absent ou illisible est
+signalé explicitement — jamais lu comme « aucune vulnérabilité ». Aucun secret
+n'est nécessaire, et Trivy n'est **jamais** installé dans l'image, le runtime,
+sur le VPS ou dans Portainer. Scanner manuellement : *Actions → CI → Run
+workflow*, ou `gh workflow run ci.yml`.
+
 ## Déploiement
 
 ```bash

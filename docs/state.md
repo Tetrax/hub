@@ -1,8 +1,9 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.5.0 livrée — branding du header configurable (`HUB_BRAND_LABEL`)
-et vue Liste du catalogue (Cartes par défaut), aucune action ouverte**.
+Statut : **V1.5.0 livrée — branding du header configurable (`HUB_BRAND_LABEL`),
+vue Liste du catalogue (Cartes par défaut) et contrôle de sécurité Trivy actif
+dans la CI (informatif) ; aucune action ouverte**.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -11,6 +12,14 @@ et vue Liste du catalogue (Cartes par défaut), aucune action ouverte**.
 
 ## Version et périmètre
 
+- **CI (2026-09-17)** : **GitHub Actions** — `.github/workflows/ci.yml` : job
+  `tests` (suite pytest complète, bloquant) puis job `security-scan` (**Trivy
+  informatif** sur l'image réellement produite : paquets OS + bibliothèques
+  Python, `HIGH,CRITICAL` corrigibles uniquement, `exit-code: 0`, artefact
+  `trivy-report` 30 jours, résumé d'étape et annotation), scan **quotidien** de
+  `main` à 05:23 UTC et lancement manuel (`workflow_dispatch`) ; Trivy n'entre
+  jamais dans l'image/le runtime, aucun secret requis (voir D21, exploitation
+  §15). Aucun changement produit : version applicative et production inchangées.
 - **V1.5** : évolution UI ciblée — **branding du header configurable**
   (`HUB_BRAND_LABEL`, « HUB » par défaut, purement visuel, validé et échappé,
   voir D19) et **deux vues du catalogue** : Cartes (par défaut, comportement
@@ -60,6 +69,8 @@ docker compose ps && docker inspect -f '{{.State.Health.Status}}' hub-web
 sudo nginx -t && systemctl is-active hub-cert-helper.service
 cd /home/tetrax/workspace/hub && .venv/bin/python -m pytest tests/ -q
 HUB_BASE_URL=http://127.0.0.1:13744 HUB_SCOPE=public .venv/bin/python tests/browser/acceptance.py
+gh run list --workflow=ci.yml --limit 3          # état du contrôle Trivy (CI)
+gh workflow run ci.yml                            # scan de sécurité manuel
 ```
 
 ## État fonctionnel
@@ -79,6 +90,13 @@ HUB_BASE_URL=http://127.0.0.1:13744 HUB_SCOPE=public .venv/bin/python tests/brow
 - **Branding (V1.5)** : libellé du header configurable par `HUB_BRAND_LABEL`
   (« HUB » par défaut ; purement visuel). Le VPS de production reste sans la
   variable.
+- **Contrôle de sécurité (CI, D21)** : scan Trivy quotidien + push/PR sur l'image
+  réelle, **informatif** (artefact `trivy-report`, résumé dans le run). État au
+  2026-09-17 : **13 vulnérabilités corrigibles (3 CRITICAL · 10 HIGH), toutes
+  dans des paquets OS Debian** de l'image de base (`perl-base`, `gzip`,
+  `libpcre2-8-0`, `libsqlite3-0`) — **0 côté Python** ; la base du jour porte
+  encore ces versions, le finding sera résolu par un rafraîchissement du digest
+  `python:3.12-slim` quand Debian publiera les correctifs.
 - **Administration** : compte unique créé au premier accès (`/admin/setup`),
   sessions serveur, CSRF, verrouillage après échecs.
 - **Migration de base** : schéma en `user_version = 2` (migration V1.1 appliquée

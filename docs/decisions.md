@@ -579,3 +579,48 @@ préférence est par utilisateur, pas par instance.
 acceptable pour un catalogue de quelques dizaines d'entrées, et c'est le prix
 d'un rendu serveur complet sans JavaScript ; un seul jeu de données et un seul
 moteur de filtre sont conservés. Aucun stockage serveur, aucune migration.
+
+## D21 — Trivy en CI : contrôle informatif de l'image, jamais bloquant
+
+**Contexte.** L'image Hub est construite depuis un `python:3.12-slim` épinglé par
+digest, avec des dépendances Python épinglées, et le dépôt n'avait **aucune CI**
+GitHub Actions. Le besoin : un contrôle de sécurité récurrent sur l'image
+réellement produite (paquets OS + bibliothèques Python), dans la même philosophie
+que FortiUpgrade — utile, actionnable, sans pipeline rouge permanent.
+
+**Décision.** Un workflow unique (`.github/workflows/ci.yml`), deux jobs :
+`tests` (suite pytest, bloquant) puis `security-scan` (**Trivy informatif**,
+`needs: tests`) qui construit l'image réelle sans la pousser, la scanne
+(`vuln-type: os,library`, `severity: HIGH,CRITICAL`, `ignore-unfixed: true`,
+`exit-code: 0`) et publie le résumé d'étape, une annotation globale et l'artefact
+`trivy-report` (JSON, 30 jours). Déclencheurs : `push` sur `main`,
+`pull_request`, scan quotidien de `main` (05:23 UTC — volontairement distinct de
+l'horaire FortiUpgrade) et `workflow_dispatch` pour un scan manuel. Le rendu du
+rapport (`scripts/trivy_report.py`) est **tolérant par construction** : un
+rapport absent ou illisible produit un avertissement explicite, jamais un
+« aucune vulnérabilité » ni un échec. Trivy n'est installé nulle part dans le
+produit (ni image, ni requirements, ni VPS, ni Portainer) et aucun secret n'est
+nécessaire.
+
+**Alternatives.** Trivy bloquant (`exit-code: 1`) : rejeté — une CVE de base
+image ou une dépendance sans action possible produirait un pipeline rouge
+permanent qui masque les vrais échecs ; les contrôles bloquants restent les tests
+et la construction d'image. Scan à la demande uniquement : rejeté — une CVE
+publiée entre deux commits ne serait pas vue ; le scan quotidien est précisément
+là pour ça. Rapport JSON seul : rejeté — illisible dans l'interface ; le résumé
+d'étape reprend compteurs, paquets, versions installées/corrigées et CVE.
+Ingestion applicative des CVE (comme FortiUpgrade) : hors périmètre — le Hub n'a
+ni alerting ni dashboard CVE et n'en a pas besoin aujourd'hui. Cache buildx
+complet : rejeté — un cache simple `type=gha` suffit (le scan quotidien de main
+inchangé réutilise les couches), sans mécanique fragile.
+
+**Conséquences.** L'image peut porter des findings sans casser la CI : ils sont
+visibles, datés, corrigeables (rafraîchir le digest de base ou mettre à jour un
+paquet). Au 2026-09-17, le scan réel relève **13 vulnérabilités corrigibles
+(3 CRITICAL, 10 HIGH), toutes dans des paquets OS Debian** de l'image de base
+(`perl-base`, `gzip`, `libpcre2-8-0`, `libsqlite3-0`) — **0 côté Python** ; la
+base du jour (`python:3.12-slim` au digest courant) porte encore ces versions :
+aucune mise à jour « sûre et minimale » de l'image n'est donc disponible
+aujourd'hui, le finding est documenté et sera résolu par un rafraîchissement du
+digest quand Debian publiera les correctifs dans l'image officielle. Aucun impact
+produit : version applicative inchangée, production non redéployée.
