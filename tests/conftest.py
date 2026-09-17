@@ -151,6 +151,9 @@ def _config(tmp_path: Path) -> dict:
         "TLS_HOSTNAME": "hub.valdev.me",
         "CERT_HELPER_SOCKET": str(tmp_path / "absent-helper.sock"),
         "TRUSTED_PROXY_CIDRS": "127.0.0.1/32",
+        # La planification Trivy ne démarre jamais dans les tests : elle est
+        # testée par appels directs (`trivy_scheduler.run_due_sync`).
+        "TRIVY_SCHEDULER_ENABLED": False,
     }
 
 

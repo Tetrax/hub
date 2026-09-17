@@ -7,6 +7,9 @@ Le schéma est versionné par `PRAGMA user_version` :
 - version 1 : `apps.category` était un simple texte libre ;
 - version 2 : les catégories sont des entités (`categories`) référencées par
   `apps.category_id`. La migration est idempotente et transactionnelle.
+- version 3 : surveillance Trivy — `security_state` (dernier état publié et
+  provenance) et `security_events` (historique minimal, statut de notification).
+  Tables additives : aucune migration des données existantes.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 FALLBACK_CATEGORY_NAME = "Autres"
 FALLBACK_CATEGORY_SLUG = "autres"
@@ -88,6 +91,48 @@ CREATE TABLE IF NOT EXISTS cert_validations (
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+
+-- Surveillance Trivy (V1.6) : dernier état publié (ligne unique) et historique.
+-- `findings_json` porte l'état courant ; les événements conservent le détail des
+-- changements et le statut de leur notification email.
+CREATE TABLE IF NOT EXISTS security_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    image TEXT NOT NULL DEFAULT '',
+    commit_sha TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',
+    run_url TEXT NOT NULL DEFAULT '',
+    run_started_at TEXT NOT NULL DEFAULT '',
+    scan_at TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL DEFAULT '',
+    report_sha256 TEXT NOT NULL DEFAULT '',
+    findings_json TEXT NOT NULL DEFAULT '[]',
+    critical_count INTEGER NOT NULL DEFAULT 0,
+    high_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    last_sync_at TEXT,
+    last_sync_status TEXT NOT NULL DEFAULT 'never',
+    last_sync_error TEXT NOT NULL DEFAULT '',
+    last_manual_sync_at TEXT,
+    last_notification_at TEXT,
+    last_notification_status TEXT NOT NULL DEFAULT '',
+    last_notification_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS security_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}',
+    commit_sha TEXT NOT NULL DEFAULT '',
+    run_id TEXT NOT NULL DEFAULT '',
+    notification_status TEXT NOT NULL DEFAULT 'none',
+    notification_error TEXT NOT NULL DEFAULT '',
+    notified_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_created ON security_events (created_at);
 """
 
 DEFAULT_SETTINGS = {

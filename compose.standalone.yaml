@@ -45,6 +45,11 @@ services:
       # Libellé du header, purement visuel (défaut : « HUB ») — à saisir dans les
       # Environment variables Portainer pour personnaliser une instance.
       HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
+      # Surveillance Trivy (optionnelle) : jeton GitHub en lecture seule et mot de
+      # passe SMTP, fournis ici ou dans les Environment variables Portainer ; vides
+      # = fonction indisponible et désactivée par défaut.
+      HUB_GITHUB_TOKEN: "${HUB_GITHUB_TOKEN:-}"
+      HUB_SMTP_PASSWORD: "${HUB_SMTP_PASSWORD:-}"
       # Nom porté par le certificat : validé à l'import du PKCS#12/PEM.
       HUB_TLS_HOSTNAME: "${HUB_HOSTNAME:?HUB_HOSTNAME est requis (nom DNS du Hub)}"
       # TLS direct : gunicorn sert HTTPS sur le port interne, l'activation d'un

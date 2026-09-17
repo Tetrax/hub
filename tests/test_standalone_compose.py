@@ -269,6 +269,30 @@ def test_brand_label_reaches_the_container_only_when_configured():
     assert configured["HUB_TLS_HOSTNAME"] == environment["HUB_TLS_HOSTNAME"] == HOSTNAME
 
 
+# --- Surveillance Trivy (optionnelle, secrets de déploiement) ------------------
+
+
+def test_trivy_secrets_are_optional_passthroughs_never_committed():
+    """Jeton GitHub et mot de passe SMTP : fournis au déploiement, vides par défaut."""
+    content = read(STANDALONE)
+    assert 'HUB_GITHUB_TOKEN: "${HUB_GITHUB_TOKEN:-}"' in content
+    assert 'HUB_SMTP_PASSWORD: "${HUB_SMTP_PASSWORD:-}"' in content
+    # Aucune valeur ni préfixe de jeton réel dans le dépôt.
+    lowered = content.lower()
+    for needle in ("ghp_", "github_pat_", "password="):
+        assert needle not in lowered
+
+
+@requires_compose
+def test_trivy_secrets_reach_the_container_without_changing_tls():
+    environment = render(extra_env={"HUB_GITHUB_TOKEN": "jeton-test", "HUB_SMTP_PASSWORD": "secret-test"})[
+        "services"
+    ]["web"]["environment"]
+    assert environment["HUB_GITHUB_TOKEN"] == "jeton-test"
+    assert environment["HUB_SMTP_PASSWORD"] == "secret-test"
+    assert environment["HUB_TLS_HOSTNAME"] == HOSTNAME
+
+
 def test_network_variables_are_documented():
     for relative in (".env.example", "docs/operations.md", "README.md"):
         text = read(relative)

@@ -49,6 +49,13 @@ services:
       # Libellé affiché à côté du logo SNS (purement visuel : aucun effet sur le
       # hostname, le certificat, la base ou les sessions). Vide = « HUB ».
       HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
+      # Secrets d'infrastructure de la surveillance Trivy (V1.6) : fournis par le
+      # déploiement, jamais versionnés, jamais en base. Jeton GitHub en LECTURE
+      # SEULE (portée Actions) pour télécharger l'artefact `trivy-report`, et mot
+      # de passe SMTP pour les alertes email. Vides = surveillance/emails
+      # simplement indisponibles (jamais activables sans eux).
+      HUB_GITHUB_TOKEN: "${HUB_GITHUB_TOKEN:-}"
+      HUB_SMTP_PASSWORD: "${HUB_SMTP_PASSWORD:-}"
       # Hostname attendu dans le certificat TLS (affichage + validation helper) : à
       # définir côté installation ; vide = aucune attente particulière.
       HUB_TLS_HOSTNAME: "${HUB_TLS_HOSTNAME:-}"

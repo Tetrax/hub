@@ -20,6 +20,8 @@
        {% if active_page == 'categories' %}aria-current="page"{% endif %}>Catégories</a>
     <a href="{{ url_for('cert.certificates') }}"
        {% if active_page == 'certificates' %}aria-current="page"{% endif %}>Certificats</a>
+    <a href="{{ url_for('security.dashboard') }}"
+       {% if active_page == 'security' %}aria-current="page"{% endif %}>Sécurité</a>
     <a href="{{ url_for('admin.settings') }}"
        {% if active_page == 'settings' %}aria-current="page"{% endif %}>Paramètres</a>
     <form class="nav-logout" method="post" action="{{ url_for('admin.logout') }}">

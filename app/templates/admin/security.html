@@ -1,0 +1,220 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Sécurité</h1>
+    <p class="admin-sub">
+      Surveillance de l'image Hub — le scan Trivy de la CI est consommé ici,
+      uniquement lorsqu'un changement est détecté.
+    </p>
+  </div>
+  <form method="post" action="{{ url_for('security.sync_now') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <button class="button button-primary" type="submit">Synchroniser maintenant</button>
+  </form>
+</div>
+
+{% if settings.sync_enabled and not github_token_set %}
+<p class="notice notice-error">
+  Surveillance activée mais jeton GitHub absent : fournir <code>HUB_GITHUB_TOKEN</code>
+  (lecture seule, portée Actions) au déploiement. Aucune synchronisation n'aura lieu
+  tant qu'il manque.
+</p>
+{% endif %}
+{% if not settings.sync_enabled %}
+<p class="notice notice-warn">
+  Surveillance désactivée. Les rapports Trivy ne sont pas récupérés ; activer la
+  surveillance ci-dessous pour suivre l'image.
+</p>
+{% endif %}
+
+<section class="panel">
+  <h2 class="panel-title">État de l'image</h2>
+  {% if state %}
+  <div class="stat-grid">
+    <div class="stat">
+      <p class="stat-value">{{ state['critical_count'] }}</p>
+      <p class="stat-label">CRITICAL</p>
+    </div>
+    <div class="stat">
+      <p class="stat-value">{{ state['high_count'] }}</p>
+      <p class="stat-label">HIGH</p>
+    </div>
+    <div class="stat">
+      <p class="stat-value">{{ findings_count }}</p>
+      <p class="stat-label">Vulnérabilités actionnables</p>
+    </div>
+  </div>
+  <dl class="kv">
+    <dt>Dernier scan</dt>
+    <dd>{{ state['scan_at'] or '—' }}
+      <span class="state-pill {{ 'state-valid' if freshness == 'fresh' else 'state-critical' }}">
+        {{ freshness_labels.get(freshness, freshness) }}
+      </span>
+      {% if freshness == 'stale' %}
+      <span class="cell-muted">(aucun rapport valide depuis plus de {{ stale_hours }} h)</span>
+      {% endif %}
+    </dd>
+    <dt>Commit</dt>
+    <dd class="mono">{{ state['commit_sha'][:12] if state['commit_sha'] else '—' }}</dd>
+    <dt>Run GitHub</dt>
+    <dd>
+      {% if state['run_url'] %}
+      <a class="nav-link" href="{{ state['run_url'] }}" rel="noopener noreferrer">run {{ state['run_id'] }}</a>
+      {% else %}—{% endif %}
+    </dd>
+    <dt>Image</dt>
+    <dd class="mono">{{ state['image'] or '—' }}</dd>
+    <dt>Dernière synchronisation</dt>
+    <dd>{{ state['last_sync_at'] or '—' }}
+      <span class="cell-muted">{{ sync_status_labels.get(state['last_sync_status'], state['last_sync_status']) }}</span>
+    </dd>
+    <dt>Prochaine synchronisation</dt>
+    <dd>{{ next_sync or 'dès la prochaine vérification (≤ ' ~ sync_interval_minutes ~ ' min)' }}</dd>
+    <dt>Notifications</dt>
+    <dd>{{ notification_labels.get(state['last_notification_status'], state['last_notification_status'] or '—') }}
+      {% if state['last_notification_status'] == 'failed' and state['last_notification_error'] %}
+      <span class="cell-muted">{{ state['last_notification_error'] }}</span>
+      {% endif %}
+    </dd>
+  </dl>
+  {% if state['last_sync_status'] in ('error', 'ignored') and state['last_sync_error'] %}
+  <p class="notice notice-warn">{{ state['last_sync_error'] }}</p>
+  {% endif %}
+  {% if state['last_notification_status'] == 'failed' %}
+  <form method="post" action="{{ url_for('security.retry_notification') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <button class="button" type="submit">Réessayer l'envoi du dernier lot</button>
+  </form>
+  {% endif %}
+  <div class="form-actions">
+    <a class="button" href="{{ url_for('security.vulnerabilities') }}">Voir les vulnérabilités</a>
+  </div>
+  {% else %}
+  <p class="notice notice-warn">
+    Aucun rapport ingéré pour le moment. Activer la surveillance puis synchroniser
+    (ou attendre la prochaine vérification automatique).
+  </p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Alertes sécurité image</h2>
+  <form method="post" action="{{ url_for('security.settings_save') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <label class="checkbox-row">
+      <input type="checkbox" name="sync_enabled" value="1" {% if settings.sync_enabled %}checked{% endif %}>
+      Activer la surveillance (récupération automatique du rapport Trivy)
+    </label>
+    <p class="form-hint">
+      Jeton GitHub : {{ 'fourni au déploiement' if github_token_set else 'absent (HUB_GITHUB_TOKEN requis pour activer)' }}.
+    </p>
+    <label class="checkbox-row">
+      <input type="checkbox" name="notifications_enabled" value="1" {% if settings.notifications_enabled %}checked{% endif %}>
+      Activer les notifications email (uniquement en cas de changement)
+    </label>
+    <div class="form-grid">
+      <div class="form-field">
+        <span class="form-label">Sévérités suivies</span>
+        <label class="checkbox-row">
+          <input type="checkbox" name="severity_critical" value="1" {% if 'critical' in settings.severities %}checked{% endif %}>
+          Critical
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="severity_high" value="1" {% if 'high' in settings.severities %}checked{% endif %}>
+          High
+        </label>
+      </div>
+      <div class="form-field">
+        <span class="form-label">Types d'événements notifiés</span>
+        <label class="checkbox-row">
+          <input type="checkbox" name="notify_new" value="1" {% if settings.notify_new %}checked{% endif %}>
+          Nouveaux findings
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="notify_resolved" value="1" {% if settings.notify_resolved %}checked{% endif %}>
+          Findings disparus
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="notify_severity" value="1" {% if settings.notify_severity %}checked{% endif %}>
+          Changements de sévérité
+        </label>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="recipients">Destinataires (un par ligne)</label>
+        <textarea class="textarea" id="recipients" name="recipients" rows="3">{{ settings.recipients | join('\n') }}</textarea>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="smtp_host">Serveur SMTP</label>
+        <input class="input" id="smtp_host" name="smtp_host" type="text" value="{{ settings.smtp_host }}">
+        <label class="form-label" for="smtp_port">Port</label>
+        <input class="input" id="smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ settings.smtp_port }}">
+        <label class="form-label" for="smtp_security">Sécurité</label>
+        <select class="select" id="smtp_security" name="smtp_security">
+          <option value="starttls" {% if settings.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
+          <option value="ssl" {% if settings.smtp_security == 'ssl' %}selected{% endif %}>TLS implicite</option>
+          <option value="none" {% if settings.smtp_security == 'none' %}selected{% endif %}>Sans chiffrement</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="smtp_username">Identifiant SMTP (optionnel)</label>
+        <input class="input" id="smtp_username" name="smtp_username" type="text" autocomplete="off" value="{{ settings.smtp_username }}">
+        <label class="form-label" for="smtp_from">Expéditeur</label>
+        <input class="input" id="smtp_from" name="smtp_from" type="email" value="{{ settings.smtp_from }}">
+        <label class="form-label" for="smtp_timeout">Délai (secondes)</label>
+        <input class="input" id="smtp_timeout" name="smtp_timeout" type="number" min="5" max="60" value="{{ settings.smtp_timeout }}">
+      </div>
+    </div>
+    <p class="form-hint">
+      Mot de passe SMTP : {{ 'fourni au déploiement' if smtp_password_set else 'absent (HUB_SMTP_PASSWORD, requis si un identifiant est défini)' }} —
+      il n'est jamais stocké en base ni affiché ici.
+    </p>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Enregistrer</button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('security.test_email') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="form-actions">
+      <button class="button" type="submit">Test d'envoi</button>
+      <span class="cell-muted">utilise exactement la configuration enregistrée</span>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Historique récent</h2>
+  {% if events %}
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th scope="col">Date</th>
+        <th scope="col">Type</th>
+        <th scope="col">Résumé</th>
+        <th scope="col">Notification</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for event in events %}
+      <tr>
+        <td class="mono">{{ event['created_at'] }}</td>
+        <td>{{ event['kind'] }}</td>
+        <td>{{ event['summary'] }}</td>
+        <td>
+          <span class="cell-muted">{{ notification_labels.get(event['notification_status'], event['notification_status']) }}</span>
+          {% if event['notification_status'] == 'failed' and event['notification_error'] %}
+          <span class="cell-muted">— {{ event['notification_error'] }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="form-hint">Les {{ events_display_limit }} événements les plus récents.</p>
+  {% else %}
+  <p class="cell-muted">Aucun événement enregistré.</p>
+  {% endif %}
+</section>
+{% endblock %}

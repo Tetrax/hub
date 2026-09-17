@@ -11,7 +11,7 @@ from . import auth, db
 from .config import DEFAULT_BRAND_LABEL, ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -35,6 +35,11 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         BRAND_LABEL=config["BRAND_LABEL"],
         GIT_SHA=config["GIT_SHA"],
         PROJECT_URL=config["PROJECT_URL"],
+        # Secrets d'infrastructure (surveillance Trivy, V1.6) : présents uniquement
+        # en mémoire ; jamais rendus, jamais journalisés.
+        GITHUB_TOKEN=config["GITHUB_TOKEN"],
+        SMTP_PASSWORD=config["SMTP_PASSWORD"],
+        TRIVY_SCHEDULER_ENABLED=config["TRIVY_SCHEDULER_ENABLED"],
         HUB_VERSION=__version__,
         MAX_CONTENT_LENGTH=config["MAX_CONTENT_LENGTH"],
         MAX_UPLOAD_BYTES=config["MAX_UPLOAD_BYTES"],
@@ -57,10 +62,18 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     from .views_admin import bp as admin_bp
     from .views_cert import bp as cert_bp
     from .views_public import bp as public_bp
+    from .views_security import bp as security_bp
 
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(cert_bp)
+    app.register_blueprint(security_bp)
+
+    # Surveillance Trivy : unique, sans second conteneur, portée par un thread
+    # d'arrière-plan verrouillé inter-process (voir app/trivy_scheduler.py).
+    from .trivy_scheduler import start_scheduler
+
+    start_scheduler(app)
 
     @app.before_request
     def _session_cookie_policy():

@@ -1,0 +1,71 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Vulnérabilités de l'image</h1>
+    <p class="admin-sub">
+      Vulnérabilités <strong>actionnables</strong> détectées par le scan Trivy de la CI
+      (HIGH et CRITICAL corrigibles) — le Hub ne prétend pas représenter toutes les
+      vulnérabilités possibles de l'image.
+    </p>
+  </div>
+  <a class="button" href="{{ url_for('security.dashboard') }}">← Sécurité</a>
+</div>
+
+<section class="panel">
+  {% if state %}
+  <dl class="kv">
+    <dt>Dernier scan</dt>
+    <dd>{{ state['scan_at'] or '—' }}
+      <span class="state-pill {{ 'state-valid' if freshness == 'fresh' else 'state-critical' }}">
+        {{ freshness_labels.get(freshness, freshness) }}
+      </span>
+    </dd>
+    <dt>Commit</dt>
+    <dd class="mono">{{ state['commit_sha'][:12] if state['commit_sha'] else '—' }}</dd>
+    <dt>Image</dt>
+    <dd class="mono">{{ state['image'] or '—' }}</dd>
+  </dl>
+  {% if findings %}
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th scope="col">Sévérité</th>
+        <th scope="col">CVE</th>
+        <th scope="col">Package</th>
+        <th scope="col">Version installée</th>
+        <th scope="col">Version corrigée</th>
+        <th scope="col">Titre</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for finding in findings %}
+      <tr>
+        <td>
+          <span class="state-pill {{ 'state-critical' if finding['severity'] == 'critical' else 'state-expiring' }}">
+            {{ finding['severity'] | upper }}
+          </span>
+        </td>
+        <td class="mono">
+          {% if finding['advisory_url'] %}
+          <a href="{{ finding['advisory_url'] }}" rel="noopener noreferrer">{{ finding['cve'] }}</a>
+          {% else %}{{ finding['cve'] }}{% endif %}
+        </td>
+        <td class="mono">{{ finding['package'] }}</td>
+        <td class="mono">{{ finding['installed_version'] or '—' }}</td>
+        <td class="mono">{{ finding['fixed_version'] or '—' }}</td>
+        <td class="cell-muted">{{ finding['title'] or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="notice notice-ok">Aucune vulnérabilité actionnable détectée dans le dernier rapport.</p>
+  {% endif %}
+  {% else %}
+  <p class="notice notice-warn">
+    Aucun rapport ingéré pour le moment — activer la surveillance depuis la page Sécurité.
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

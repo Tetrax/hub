@@ -31,6 +31,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
 def _brand_label(raw: str) -> str:
     """Libellé du header : texte simple (trim, espaces normalisés, sans caractère
     de contrôle), borné en longueur ; jamais de HTML — le gabarit échappe la
@@ -67,6 +74,13 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         "TRUSTED_PROXY_CIDRS": os.environ.get("HUB_TRUSTED_PROXY_CIDRS", ""),
         "SESSION_TTL_SECONDS": _env_int("HUB_SESSION_TTL_SECONDS", 12 * 3600),
         "GIT_SHA": os.environ.get("HUB_GIT_SHA", "").strip()[:40] or None,
+        # Secrets d'infrastructure (V1.6) : fournis par le déploiement, jamais en
+        # base, jamais dans Git ni dans une réponse HTTP. Le jeton GitHub est en
+        # LECTURE SEULE (portée Actions) : le téléchargement d'artefact l'exige,
+        # même pour un dépôt public (vérifié).
+        "GITHUB_TOKEN": os.environ.get("HUB_GITHUB_TOKEN", "").strip(),
+        "SMTP_PASSWORD": os.environ.get("HUB_SMTP_PASSWORD", ""),
+        "TRIVY_SCHEDULER_ENABLED": _env_bool("HUB_TRIVY_SCHEDULER", True),
         "MAX_CONTENT_LENGTH": 8 * 1024 * 1024,  # requête HTTP complète
         "MAX_UPLOAD_BYTES": 4 * 1024 * 1024,  # screenshot
         "CERT_MAX_BYTES": 512 * 1024,  # certificat / clé / chaîne (chacun)
