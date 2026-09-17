@@ -1,0 +1,113 @@
+name: CI
+
+# ---------------------------------------------------------------------------
+# Politique du contrôle de sécurité Trivy (image Docker)
+#
+# TRIVY (scan de l'image conteneur) :
+#   - lancé par le job `security-scan`, après le job `tests` ;
+#   - l'image scannée est celle réellement produite par le Dockerfile du dépôt,
+#     construite localement par la CI (aucun push) ;
+#   - couvre les paquets OS (Debian) et les bibliothèques Python de l'image ;
+#   - seuil : HIGH et CRITICAL uniquement, et seulement quand un correctif est
+#     disponible (`ignore-unfixed: true`) — un finding sans correctif produit
+#     une alerte sur laquelle personne ne peut agir ;
+#   - INFORMATIF, NON BLOQUANT : `exit-code: 0` — un finding ne fait jamais
+#     échouer le run. Les résultats sont rendus visibles par le résumé d'étape,
+#     une annotation `::warning::` globale et l'artefact `trivy-report`
+#     (trivy.json, 30 jours). Un pipeline rouge à chaque build masquerait les
+#     échecs qui comptent réellement ;
+#   - les contrôles bloquants restent : la suite pytest et la construction de
+#     l'image (un build impossible est un vrai échec) ;
+#   - un rapport absent ou illisible est signalé explicitement (warning dans le
+#     résumé) — jamais transformé en « aucune vulnérabilité » ;
+#   - l'exécution ne demande aucun secret applicatif (aucun SMTP, aucun
+#     certificat, aucune donnée de production : `.dockerignore` exclut
+#     `runtime/`, `.env*`, tests, docs, deploy et scripts de l'image) ;
+#   - pour rendre Trivy bloquant : `exit-code: 1` sur l'étape de scan et retirer
+#     `if-no-files-found: warn` de l'étape d'artefact.
+#
+# Le scan quotidien (05:23 UTC) scanne le HEAD de main : même sans commit, une
+# nouvelle CVE publiée apparaît dans le rapport du lendemain. Il ne pousse
+# aucune image et ne déplace aucun tag.
+# ---------------------------------------------------------------------------
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Scan quotidien de main — 05:23 UTC (07:23 Paris), distinct de FortiUpgrade.
+  schedule:
+    - cron: "23 5 * * *"
+  # Lancement manuel (vérifier une nouvelle CVE sans pousser de commit).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dépendances de développement
+        run: pip install -r requirements-dev.txt
+      - name: Suite pytest
+        run: python -m pytest tests/ -q
+
+  security-scan:
+    name: Scan de vulnérabilités de l'image (Trivy — informatif)
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Préparer Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Construire l'image Hub (scan uniquement — aucun push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          build-args: |
+            HUB_GIT_SHA=${{ github.sha }}
+          tags: hub:ci-scan
+          load: true
+          push: false
+          # Cache raisonnable : un scan quotidien de main inchangé réutilise les
+          # couches de la veille au lieu de tout reconstruire.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # Contrôle informatif : `exit-code: 0` — un finding ne fait jamais échouer
+      # le run. Le rapport JSON est toujours produit et exploité par les étapes
+      # suivantes.
+      - name: Scanner l'image (OS + bibliothèques, informatif)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: hub:ci-scan
+          format: json
+          output: trivy.json
+          exit-code: 0
+          # Uniquement les findings actionnables : pas de correctif disponible,
+          # pas d'alerte (rafraîchir l'image de base ou mettre à jour le paquet).
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      # Jamais bloquant : le résumé indique les compteurs, les paquets, les
+      # versions installées/corrigées et rappelle la nature informative du
+      # contrôle — « findings détectés » ne doit jamais se lire « build cassé ».
+      - name: Publier le résumé des findings dans la page du run
+        if: always()
+        run: python3 scripts/trivy_report.py trivy.json --summary-file "$GITHUB_STEP_SUMMARY"
+      - name: Téléverser le rapport JSON Trivy
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy.json
+          retention-days: 30
+          # Un rapport absent est signalé, jamais fatal : le contrôle reste
+          # informatif quoi qu'il arrive au scan lui-même.
+          if-no-files-found: warn
