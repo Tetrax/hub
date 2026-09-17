@@ -108,6 +108,68 @@ def check_hero_visual(page: Page, label: str) -> None:
     )
 
 
+def brand_state(page: Page) -> dict:
+    """Libellé de marque du header : une seule ligne, aligné verticalement sur le logo."""
+    return page.evaluate(
+        """() => {
+            const label = document.querySelector('.brand-name');
+            const logo = document.querySelector('.brand-logo');
+            if (!label || !logo) { return { present: false }; }
+            const labelBox = label.getBoundingClientRect();
+            const logoBox = logo.getBoundingClientRect();
+            const styles = getComputedStyle(label);
+            const lineHeight = parseFloat(styles.lineHeight) || 0;
+            return {
+                present: true,
+                text: label.textContent.trim(),
+                lines: lineHeight > 0 ? Math.round(labelBox.height / lineHeight) : 0,
+                centered:
+                    Math.abs(labelBox.top + labelBox.height / 2 - (logoBox.top + logoBox.height / 2)) < 4,
+            };
+        }"""
+    )
+
+
+def catalog_view_state(page: Page) -> dict:
+    """État réel de la vue catalogue : bascule, panneaux visibles, préférence, compteur."""
+    return page.evaluate(
+        """() => {
+            const root = document.documentElement;
+            const panel = (name) => document.querySelector('[data-view-panel="' + name + '"]');
+            const visible = (element) => {
+                if (!element) { return false; }
+                const styles = getComputedStyle(element);
+                return styles.display !== 'none' && styles.visibility !== 'hidden';
+            };
+            const pressed = (name) => {
+                const button = document.querySelector('[data-view-button="' + name + '"]');
+                return button ? button.getAttribute('aria-pressed') : null;
+            };
+            const cardPanel = panel('cards');
+            const listPanel = panel('list');
+            const counter = document.querySelector('[data-result-count]');
+            let stored = null;
+            try { stored = window.localStorage.getItem('hub_catalog_view'); } catch (error) { stored = null; }
+            const height = (element) => (element ? element.getBoundingClientRect().height : 0);
+            return {
+                attribute: root.getAttribute('data-catalog-view'),
+                stored: stored,
+                cardsVisible: visible(cardPanel),
+                listVisible: visible(listPanel),
+                switchVisible: visible(document.querySelector('[data-view-switch]')),
+                pressedCards: pressed('cards'),
+                pressedList: pressed('list'),
+                cards: cardPanel ? cardPanel.querySelectorAll('[data-app]').length : 0,
+                rows: listPanel ? listPanel.querySelectorAll('[data-app]').length : 0,
+                listImages: listPanel ? listPanel.querySelectorAll('img').length : 0,
+                cardsHeight: Math.round(height(cardPanel)),
+                listHeight: Math.round(height(listPanel)),
+                count: counter ? counter.textContent.trim() : null,
+            };
+        }"""
+    )
+
+
 def main() -> int:
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     password = ADMIN_PASSWORD or secrets.token_urlsafe(24)
@@ -276,6 +338,26 @@ def main() -> int:
         check_hero_visual(mpage_light, "mobile clair")
         mpage_light.screenshot(path=str(SHOTS_DIR / "hub-landing-light-mobile.png"))
 
+        # Vue Liste sur mobile clair : aucune capture, pas de débordement.
+        before_light = catalog_view_state(mpage_light)
+        mpage_light.locator("[data-view-button='list']").click()
+        mpage_light.wait_for_timeout(250)
+        state = catalog_view_state(mpage_light)
+        overflow_light = mpage_light.evaluate(
+            "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        check(
+            "Vue Liste mobile clair : affichée sans débordement",
+            state["attribute"] == "list" and state["listVisible"] and overflow_light <= 0,
+            f"débordement={overflow_light}px, {state['rows']} lignes",
+        )
+        check(
+            "Vue Liste mobile clair : aucune capture, plus dense que les cartes",
+            state["listImages"] == 0 and 0 < state["listHeight"] < before_light["cardsHeight"],
+            f"liste={state['listHeight']}px cartes={before_light['cardsHeight']}px",
+        )
+        mpage_light.screenshot(path=str(SHOTS_DIR / "hub-mobile-light-list.png"))
+
         # --- Transfert des captures d'applications (mode complet seulement) ----
         if admin_ready and APPS_SHOTS:
             shots = Path(APPS_SHOTS)
@@ -301,6 +383,12 @@ def main() -> int:
         cards = page.locator("[data-card]").count()
         check("Landing : cartes affichées", cards >= 1, f"{cards} cartes")
         check_hero_visual(page, "desktop sombre")
+        brand = brand_state(page)
+        check(
+            "Header : libellé de marque sur une ligne, aligné au logo",
+            brand["present"] and brand["lines"] == 1 and brand["centered"] and bool(brand["text"]),
+            f"« {brand.get('text', '')} » sur {brand.get('lines')} ligne(s)",
+        )
         images = page.evaluate(
             """() => Array.from(document.querySelectorAll('.card-media img'))
                      .map(img => img.naturalWidth > 0)"""
@@ -332,6 +420,161 @@ def main() -> int:
             chips.nth(0).click()
             page.wait_for_timeout(150)
 
+        # --- Vue du catalogue : Cartes (défaut) puis Liste ---------------------
+        before = catalog_view_state(page)
+        check(
+            "Vue catalogue : Cartes par défaut, bascule disponible",
+            before["attribute"] is None
+            and before["cardsVisible"]
+            and not before["listVisible"]
+            and before["switchVisible"]
+            and before["pressedCards"] == "true"
+            and before["pressedList"] == "false",
+            f"attribut={before['attribute']} bascule={before['switchVisible']}",
+        )
+
+        page.locator("[data-view-button='list']").click()
+        page.wait_for_timeout(300)
+        state = catalog_view_state(page)
+        check(
+            "Vue Liste : affichée, cartes masquées, préférence mémorisée",
+            state["attribute"] == "list"
+            and state["listVisible"]
+            and not state["cardsVisible"]
+            and state["stored"] == "list"
+            and state["pressedList"] == "true",
+            f"attribut={state['attribute']} préférence={state['stored']}",
+        )
+        check(
+            "Vue Liste : aucune capture affichée",
+            state["listImages"] == 0,
+            f"{state['listImages']} image(s) dans la liste",
+        )
+        check(
+            "Vue Liste : mêmes applications que les cartes",
+            state["rows"] == before["cards"] and state["rows"] >= 1,
+            f"{state['rows']} lignes / {before['cards']} cartes",
+        )
+        check(
+            "Vue Liste : plus dense que les cartes",
+            0 < state["listHeight"] < before["cardsHeight"],
+            f"liste={state['listHeight']}px cartes={before['cardsHeight']}px",
+        )
+        check(
+            "Vue Liste : compteur aligné sur les lignes affichées",
+            f"{state['rows']} application" in (state["count"] or ""),
+            f"compteur={state['count']!r}",
+        )
+        hrefs = page.evaluate(
+            "() => Array.from(document.querySelectorAll(\"[data-view-panel='list'] .row-link\"))"
+            ".map(a => a.href + ' ' + a.target)"
+        )
+        card_hrefs = page.evaluate(
+            "() => Array.from(document.querySelectorAll(\"[data-view-panel='cards'] .card-link\"))"
+            ".map(a => a.href + ' ' + a.target)"
+        )
+        check(
+            "Vue Liste : CTA et ouverture identiques aux cartes",
+            hrefs == card_hrefs and len(hrefs) >= 1,
+            f"{len(hrefs)} liens comparés",
+        )
+
+        # Recherche : même moteur en vue Liste.
+        page.fill("[data-filter='search']", "fortiflow")
+        page.wait_for_timeout(300)
+        filtered = page.locator("[data-view-panel='list'] [data-app]:visible").count()
+        state = catalog_view_state(page)
+        check(
+            "Vue Liste : recherche instantanée (mêmes résultats que les cartes)",
+            filtered >= 1 and filtered < before["cards"],
+            f"{filtered} lignes visibles sur {before['cards']}",
+        )
+        check(
+            "Vue Liste : compteur après recherche",
+            f"{filtered} application" in (state["count"] or ""),
+            f"compteur={state['count']!r}",
+        )
+        page.fill("[data-filter='search']", "")
+        page.wait_for_timeout(250)
+
+        # Persistance : rechargement direct en vue Liste, avant le premier rendu.
+        page.reload(wait_until="domcontentloaded")
+        early = catalog_view_state(page)
+        check(
+            "Vue Liste : conservée après rechargement, appliquée avant le rendu",
+            early["attribute"] == "list" and early["listVisible"] and early["pressedList"] == "true",
+            f"attribut={early['attribute']}",
+        )
+        page.wait_for_timeout(250)
+        page.screenshot(path=str(SHOTS_DIR / "hub-desktop-dark-list.png"))
+
+        # Filtres de catégories : même moteur en vue Liste.
+        chips = page.locator("[data-category-chip]")
+        if chips.count() > 1:
+            chips.nth(1).click()
+            page.wait_for_timeout(300)
+            filtered = page.locator("[data-view-panel='list'] [data-app]:visible").count()
+            check("Vue Liste : filtre catégorie actif", filtered >= 1, f"{filtered} lignes visibles")
+            chips.nth(0).click()
+            page.wait_for_timeout(250)
+
+        # Retour aux cartes : comportement historique intact.
+        page.locator("[data-view-button='cards']").click()
+        page.wait_for_timeout(250)
+        state = catalog_view_state(page)
+        check(
+            "Vue Cartes : retour depuis la vue Liste, comportement inchangé",
+            state["attribute"] == "cards"
+            and state["cardsVisible"]
+            and not state["listVisible"]
+            and state["stored"] == "cards",
+            f"attribut={state['attribute']} préférence={state['stored']}",
+        )
+
+        # --- Vue Liste (desktop, thème clair) et bascule au clavier ------------
+        light_page.goto(BASE_URL, wait_until="networkidle")
+        light_page.locator("[data-view-button='list']").click()
+        light_page.wait_for_timeout(300)
+        state = catalog_view_state(light_page)
+        theme = theme_state(light_page)
+        check(
+            "Vue Liste : rendue en thème clair (tokens clairs)",
+            state["attribute"] == "list" and state["listVisible"] and theme["bgTop"] == LIGHT_BG,
+            f"fond={theme['bgTop']}",
+        )
+        light_page.screenshot(path=str(SHOTS_DIR / "hub-desktop-light-list.png"))
+
+        # Changement de thème sans quitter la vue Liste.
+        light_page.locator("[data-theme-toggle]").click()
+        light_page.wait_for_timeout(250)
+        state = catalog_view_state(light_page)
+        theme = theme_state(light_page)
+        check(
+            "Vue Liste : changement de thème sans quitter la vue",
+            theme["attribute"] == "dark" and state["attribute"] == "list" and state["listVisible"],
+            f"thème={theme['attribute']} vue={state['attribute']}",
+        )
+        light_page.screenshot(path=str(SHOTS_DIR / "hub-desktop-dark-list-forced.png"))
+
+        # Bascule de vue pilotable au clavier, état actif exposé (aria-pressed).
+        light_page.locator("[data-view-button='cards']").focus()
+        focused = light_page.evaluate(
+            "() => ({ tag: document.activeElement.tagName,"
+            " label: (document.activeElement.textContent || '').trim() })"
+        )
+        light_page.keyboard.press("Enter")
+        light_page.wait_for_timeout(250)
+        state = catalog_view_state(light_page)
+        check(
+            "Vue catalogue : bascule pilotable au clavier (état actif exposé)",
+            focused["tag"] == "BUTTON"
+            and focused["label"] == "Cartes"
+            and state["attribute"] == "cards"
+            and state["cardsVisible"]
+            and state["pressedCards"] == "true",
+            f"focus={focused['label']} attribut={state['attribute']}",
+        )
+
         # --- Landing page (mobile, thème sombre) -------------------------------
         mpage = mobile.new_page()
         mpage.goto(BASE_URL, wait_until="networkidle")
@@ -340,7 +583,33 @@ def main() -> int:
         )
         check("Mobile : pas de scroll horizontal", overflow <= 0, f"débordement={overflow}px")
         check_hero_visual(mpage, "mobile sombre")
+        brand = brand_state(mpage)
+        check(
+            "Header mobile : libellé de marque sur une ligne, aligné au logo",
+            brand["present"] and brand["lines"] == 1 and brand["centered"] and bool(brand["text"]),
+            f"« {brand.get('text', '')} » sur {brand.get('lines')} ligne(s)",
+        )
         mpage.screenshot(path=str(SHOTS_DIR / "hub-mobile-dark.png"))
+
+        # Vue Liste sur mobile sombre : lignes compactes, aucune capture.
+        before_mobile = catalog_view_state(mpage)
+        mpage.locator("[data-view-button='list']").click()
+        mpage.wait_for_timeout(300)
+        state = catalog_view_state(mpage)
+        overflow = mpage.evaluate(
+            "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        check(
+            "Vue Liste mobile sombre : affichée sans débordement",
+            state["attribute"] == "list" and state["listVisible"] and overflow <= 0,
+            f"débordement={overflow}px, {state['rows']} lignes",
+        )
+        check(
+            "Vue Liste mobile sombre : aucune capture, plus dense que les cartes",
+            state["listImages"] == 0 and 0 < state["listHeight"] < before_mobile["cardsHeight"],
+            f"liste={state['listHeight']}px cartes={before_mobile['cardsHeight']}px",
+        )
+        mpage.screenshot(path=str(SHOTS_DIR / "hub-mobile-dark-list.png"))
 
         # --- Administration (mode complet, session requise) --------------------
         if admin_ready:
