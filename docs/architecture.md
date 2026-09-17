@@ -100,14 +100,18 @@ structure (vérifié par comparaison des rendus `docker compose config`).
   Le parcours certificat passe par **`certbackend.py`** : `certclient.py` (helper
   du VPS), `certlocal.py` (TLS direct du standalone) ou aucun backend — les vues
   ne connaissent que ces trois fonctions.
-- **Surveillance Trivy (V1.6)** : `trivy.py` (validation stricte du rapport et
-  identité `CVE + paquet`), `trivy_github.py` (API GitHub en lecture seule :
-  dernier run réussi, artefact `trivy-report`, ZIP borné — jeton
-  `HUB_GITHUB_TOKEN`, jamais renvoyé ni journalisé), `trivy_monitor.py`
+- **Surveillance Trivy (V1.6, transport email V1.6.1)** : `trivy.py` (validation
+  stricte du rapport et identité `CVE + paquet`), `trivy_github.py` (API GitHub
+  en lecture seule : dernier run réussi, artefact `trivy-report`, ZIP borné —
+  jeton `HUB_GITHUB_TOKEN`, jamais renvoyé ni journalisé), `trivy_monitor.py`
   (configuration fonctionnelle, état, baseline, delta, publication atomique,
-  verrou `flock`), `trivy_email.py` (composition SNS + envoi SMTP, un seul email
-  par synchronisation), `trivy_scheduler.py` (thread d'arrière-plan, aucune
-  planification externe) et `views_security.py` (section `/admin/security`).
+  verrou `flock`), `trivy_email.py` (composition SNS + **un seul point d'envoi**
+  qui choisit le transport), `graphmail.py` (transport Microsoft 365 : jeton
+  *client credentials*, `sendMail` JSON, erreurs traduites — endpoints figés),
+  `mailsecrets.py` (stockage dédié des secrets email : fichiers 0600 du
+  répertoire de données, écriture atomique, provenance admin > environnement),
+  `trivy_scheduler.py` (thread d'arrière-plan, aucune planification externe) et
+  `views_security.py` (section `/admin/security`).
   Le Hub **consomme**, il ne scanne jamais : aucun accès Docker, aucun
   `docker.sock`, aucune inspection de conteneur.
 
@@ -192,6 +196,7 @@ NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
 | Catalogue, sessions, compte admin | `runtime/data/hub.sqlite` | `/data/hub.sqlite` | oui (copie SQLite cohérente) |
 | Screenshots | `runtime/data/uploads/` | `/data/uploads/` | oui |
 | Clé de signature des sessions | `runtime/data/.secret_key` (0600) | `/data/.secret_key` | oui (sensible) |
+| Secrets email (mot de passe SMTP, secret client Microsoft 365) | `runtime/data/secrets/` (0700, fichiers 0600) | `/data/secrets/` | oui (sensible, archive 0600) |
 | Certificat + clé privée gérés | `/var/lib/hub/certificates/` (root) | non monté dans le conteneur | oui (archive séparée root) |
 
 En **standalone**, les mêmes données vivent dans deux volumes Docker nommés
@@ -200,7 +205,7 @@ sans `mkdir`/`chown` sur l'hôte) :
 
 | Volume | Contenu | Montage |
 |---|---|---|
-| `hub_data` | `hub.sqlite`, `uploads/`, `.secret_key` | `/data` |
+| `hub_data` | `hub.sqlite`, `uploads/`, `.secret_key`, `secrets/` | `/data` |
 | `hub_certs` | générations de certificats, lien `active`, `fullchain.pem` (0644) et `privkey.pem` (0600), marqueur `.bootstrap`, état de rollback | `/certs` |
 
 ## Flux principaux

@@ -310,8 +310,12 @@ puis `HUB_BACKUP_DIR` du fichier `.env`, puis `./backups/hub` (défaut portable)
 Le VPS de production utilise `/home/tetrax/backups/hub` (valeur de son `.env`).
 Nombre d'archives conservées : `HUB_BACKUP_KEEP` (défaut 10).
 
-Contenu : `hub.sqlite` (copie cohérente), `uploads/`, `secret_key`,
+Contenu : `hub.sqlite` (copie cohérente), `uploads/`, `secret_key`, `secrets/`
+(secrets email administrés — **sensible**, comme la clé de session),
 `MANIFEST.txt`, plus une archive séparée des certificats (`hub-certificates-*.tar.gz`).
+L'archive est écrite en **0600** : elle contient des secrets (clé de session et,
+depuis la V1.6.1, mot de passe SMTP / secret client Microsoft 365 s'ils ont été
+enregistrés dans l'administration).
 
 ### Restauration
 
@@ -327,13 +331,19 @@ sudo install -o "$(stat -c %u runtime/data)" -g "$(stat -c %g runtime/data)" \
 sudo cp -a /tmp/hub-restore/uploads/. runtime/data/uploads/
 sudo install -m 0600 -o "$(stat -c %u runtime/data)" -g "$(stat -c %g runtime/data)" \
      /tmp/hub-restore/secret_key runtime/data/.secret_key
+sudo install -d -m 0700 -o "$(stat -c %u runtime/data)" -g "$(stat -c %g runtime/data)" \
+     runtime/data/secrets
+sudo cp -a /tmp/hub-restore/secrets/. runtime/data/secrets/
 sudo chown -R "$(stat -c %u runtime/data):$(stat -c %g runtime/data)" runtime/data
 docker compose up -d --no-build && curl -s http://127.0.0.1:13744/healthz
 ```
 
-Restauration partielle : seule la base (`hub.sqlite`) ou seuls les `uploads/`
-peuvent être remis en place de la même façon ; la clé de session
-(`.secret_key`) n'est utile que pour conserver les sessions en cours.
+Restauration partielle : seule la base (`hub.sqlite`), seuls les `uploads/` ou
+seuls les `secrets/` peuvent être remis en place de la même façon ; la clé de
+session (`.secret_key`) n'est utile que pour conserver les sessions en cours. Si
+`secrets/` est restauré sans `hub.sqlite`, le transport sélectionné reste celui
+de la base en place : vérifier la page Sécurité (provenance des secrets et test
+d'envoi) après restauration.
 
 Certificats : restaurer `hub-certificates-*.tar.gz` dans `/var/lib/hub/`
 (le lien `active` est inclus) puis `sudo nginx -t && sudo systemctl reload nginx`
@@ -679,14 +689,28 @@ La fonction est **désactivée par défaut** et se configure dans
    même sur un dépôt public.
    - VPS : `HUB_GITHUB_TOKEN` dans `.env` puis redéploiement/recréation.
    - Portainer : `HUB_GITHUB_TOKEN` dans les *Environment variables* de la stack.
-2. **SMTP** (si les emails sont voulus) : renseigner serveur, port, sécurité
-   (STARTTLS/TLS/sans chiffrement), identifiant éventuel, expéditeur et
-   destinataires dans l'admin, et fournir `HUB_SMTP_PASSWORD` au déploiement
-   (requis si un identifiant est défini).
+2. **Transport email** (si les emails sont voulus) — **entièrement dans
+   l'admin**, aucun passage par Portainer (V1.6.1, D23) :
+   - ouvrir `/admin/security`, section **Transport email** ;
+   - choisir **SMTP** (serveur, port, sécurité, identifiant, mot de passe,
+     expéditeur, nom d'affichage éventuel) ou **Microsoft 365** (Tenant ID,
+     Client ID, Client secret, boîte expéditrice, nom d'affichage) ;
+   - destinataires : communs aux deux transports (une adresse par ligne, 10 max) ;
+   - **Enregistrer**, puis **Test d'envoi** — le message de test utilise
+     exactement le transport et le secret enregistrés.
+   - Le mot de passe SMTP / secret client sont **écrits hors base**, dans
+     `secrets/` du répertoire de données (0600), ne sont jamais réaffichés
+     (« configuré / non configuré ») et ne changent que s'ils sont explicitement
+     remplacés ou supprimés (bouton dédié + confirmation).
+   - Les variables `HUB_SMTP_PASSWORD` / `HUB_MICROSOFT_CLIENT_SECRET` restent un
+     **bootstrap** : utilisées seulement tant qu'aucun secret administré n'existe
+     (l'UI affiche la provenance effective).
 3. Dans `/admin/security` : cocher **Activer la surveillance**, puis (optionnel)
    **Activer les notifications email**, choisir les sévérités suivies et les types
    d'événements, **Enregistrer**. L'activation est refusée avec un message clair
-   si un prérequis manque (jeton absent, SMTP incomplet).
+   si un prérequis manque (jeton absent, transport sélectionné incomplet — la
+   page affiche « Notifications activées mais transport email incomplet » dans ce
+   cas, et la synchronisation continue sans email).
 4. Premier passage : la **baseline est initialisée silencieusement** (aucun email) ;
    elle est affichée dans l'historique.
 
@@ -694,6 +718,23 @@ La synchronisation automatique tourne ensuite **une fois par heure au plus** (le
 scan CI est quotidien) ; « Synchroniser maintenant » est limité à une action par
 minute. Le standalone fonctionne sans second conteneur ni modification
 d'architecture.
+
+### 16.2.1 Permissions Microsoft 365 requises
+
+- **Application** (app registration) avec un **secret client** ; le Hub utilise
+  le flux *client credentials* (`https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`,
+  périmètre `https://graph.microsoft.com/.default`).
+- **Permission applicative `Mail.Send`** accordée avec **consentement
+  administrateur** (c'est la seule nécessaire ; l'envoi se fait via
+  `POST https://graph.microsoft.com/v1.0/users/{mailbox}/sendMail`).
+- La **boîte expéditrice** doit exister dans le tenant (elle peut être une boîte
+  partagée). L'adresse affichée chez les destinataires est celle de la boîte
+  Exchange : le Hub n'impose pas de `from` dans l'appel Graph (un `from` d'une
+  autre adresse expose à `ErrorSendAsDenied` — le modèle validé ne le fait pas).
+- Erreurs fréquentes, traduites dans l'UI : `AADSTS90002` (tenant introuvable),
+  `AADSTS7000215` (secret refusé), 403 (permission `Mail.Send` manquante ou
+  consentement absent), 404 (boîte introuvable), 429/5xx (limite ou
+  indisponibilité temporaire — réessayer plus tard).
 
 ### 16.3 Lire l'état
 
@@ -712,20 +753,29 @@ d'architecture.
 | GitHub inaccessible / jeton expiré / quota | Dernier état conservé, vieillit (`Rapport ancien` > 48 h), aucune fausse résolution ; l'erreur est visible sur le dashboard. |
 | Artefact absent ou expiré | Idem : état conservé, message explicite (attendre le prochain scan ou relancer le workflow CI). |
 | Rapport invalide | Refusé en entier, état conservé, message précis (jamais de « 0 vulnérabilité »). |
-| Échec d'envoi email | Baseline mise à jour quand même ; l'événement est marqué « échec d'envoi », bouton **Réessayer l'envoi du dernier lot**. |
+| Échec d'envoi email (SMTP ou Microsoft 365) | Baseline mise à jour quand même ; l'événement est marqué « échec d'envoi » (message traduit : auth refusée, permission manquante, boîte introuvable, timeout…), bouton **Réessayer l'envoi du dernier lot**. |
+| Transport email incomplet (notifications activées) | Aucun envoi tenté, aucun email ; la page Sécurité affiche « transport email incomplet » et la synchronisation continue normalement. |
 | Surveillance désactivée | Aucune synchronisation, aucun email, aucun avertissement permanent. |
 
 ### 16.5 Exploitation
 
 - **Désactiver** : décocher la surveillance (ou les emails) et enregistrer —
   l'état existant est conservé et l'interface le précise.
+- **Changer de transport** : basculer le bouton SMTP ⇄ Microsoft 365 et
+  enregistrer — prise en compte **immédiate** (aucun redémarrage). Les
+  paramètres de l'autre transport restent conservés pour un retour arrière.
+- **Remplacer / supprimer un secret** : champ « nouveau secret » (vide =
+  conservé) ou bouton **Supprimer le secret** (confirmation) dans
+  `/admin/security`. Supprimer un secret administré alors qu'une variable de
+  déploiement existe ré-active cette variable (la provenance affichée le dit).
 - **Réinitialiser la baseline** (nouveau départ volontaire) :
   `docker compose exec web python -m app.manage` n'est pas nécessaire :
   `docker exec hub-web python -c "import sqlite3,os;c=sqlite3.connect(os.environ.get('HUB_DATA_DIR','/data')+'/hub.sqlite');c.execute('DELETE FROM security_state');c.execute('DELETE FROM security_events');c.commit()"`
   — la prochaine synchronisation réinitialise la baseline en silence.
-- **Sauvegarde/restauration** : l'état et la configuration vivent dans
-  `hub.sqlite`, donc le backup existant (`sudo ./scripts/backup.sh`) les couvre
-  automatiquement ; aucune procédure supplémentaire.
+- **Sauvegarde/restauration** : l'état et la configuration non sensible vivent
+  dans `hub.sqlite` ; les secrets email vivent dans `secrets/` du répertoire de
+  données — les deux sont couverts par `sudo ./scripts/backup.sh` (§8), dont
+  l'archive reste en 0600 (elle contient des secrets).
 - **Planification** : interne à l'application (thread + verrou inter-process),
   désactivable par `HUB_TRIVY_SCHEDULER=0` (voir §3) ; aucun timer systemd, aucun
   service supplémentaire en standalone.

@@ -705,3 +705,102 @@ existantes gardent leur comportement actuel tant qu'un jeton n'est pas fourni et
 la surveillance activée. Rien n'est publié hors de `/admin/security`. Le backup
 existant couvre l'état et la configuration (même base). Réinitialiser une baseline
 = supprimer la ligne `security_state` (procédure en `docs/operations.md` §16).
+
+## D23 — Transport email administrable : SMTP ou Microsoft 365, secrets hors base (V1.6.1)
+
+**Contexte.** La V1.6 (D22) livre les alertes email avec un SMTP minimal : les
+paramètres non secrets se règlent dans l'admin, mais le mot de passe vient
+obligatoirement du déploiement (`HUB_SMTP_PASSWORD`, variable Portainer) et
+Microsoft 365 est reporté. Le besoin exprimé est le confort d'administration de
+FortiUpgrade : ouvrir la webapp → choisir SMTP ou Microsoft 365 → saisir les
+paramètres et le secret → tester l'envoi → les alertes utilisent cette
+configuration, sans passage par Portainer. Cette décision **complète D22** et
+remplace son point « Transport email : SMTP standard uniquement ».
+
+**Décision.**
+
+- **Un seul transport actif à la fois** : `security.email_transport`
+  (`smtp` | `microsoft365`) persisté dans la table `settings` (SQLite) — même
+  persistance que le reste (backup, restauration, aucune migration de schéma :
+  la V1.6 → V1.6.1 est purement additive, les clés existantes sont conservées et
+  les nouvelles ont des défauts sûrs). Les paramètres de l'autre transport
+  **restent conservés** lors d'une bascule (retour arrière immédiat) mais ne sont
+  jamais utilisés tant qu'il n'est pas sélectionné.
+- **Secrets hors base** : mot de passe SMTP et secret client Microsoft 365 vivent
+  dans des fichiers dédiés `$HUB_DATA_DIR/secrets/` (répertoire 0700, fichiers
+  0600), écrits de façon **atomique** (fichier temporaire + `fsync` +
+  `os.replace`, `O_NOFOLLOW`, refus des liens symboliques) par
+  `app/mailsecrets.py`. Jamais en base, jamais dans une réponse HTTP (l'UI
+  n'affiche qu'une **provenance**), jamais dans un log ou un traceback, jamais
+  dans Git ou l'image. Champ vide = secret conservé ; remplacement et
+  **suppression explicite** (contrôle dédié + confirmation + `confirm_delete`,
+  CSRF) — jamais de suppression accidentelle.
+- **Source de vérité sans ambiguïté** : le secret enregistré dans
+  l'administration est **prioritaire dès qu'il existe** ; les variables
+  d'environnement (`HUB_SMTP_PASSWORD`, `HUB_MICROSOFT_CLIENT_SECRET`) ne servent
+  que de **bootstrap** tant qu'aucun secret administré n'existe, et l'UI affiche
+  la provenance effective. Supprimer un secret administré ré-expose la valeur du
+  déploiement (signalé à l'opérateur) ; aucun secret n'est jamais copié
+  automatiquement d'une source vers l'autre.
+- **SMTP** : serveur, port, sécurité (STARTTLS / TLS implicite / aucune),
+  identifiant, expéditeur, **nom d'affichage** (en-tête `From`), destinataires
+  (communs aux deux transports) et délai (5–60 s). La validation TLS reste
+  active ; un relais à PKI interne exige d'injecter la CA de confiance dans
+  l'image (documenté, pas de bouton « ignorer les erreurs TLS »).
+- **Microsoft 365** : OAuth2 *client credentials* (`login.microsoftonline.com`)
+  puis `POST https://graph.microsoft.com/v1.0/users/{mailbox}/sendMail` en JSON
+  (`body.contentType` / `body.content`) — le modèle validé de FortiUpgrade, sans
+  SDK. Endpoints **figés** (aucune saisie admin ne peut les remplacer), timeout
+  partagé, erreurs traduites en messages opérateur avec classification AADSTS en
+  **liste blanche** (tenant introuvable, secret refusé/expiré, Mail.Send
+  manquante, boîte introuvable, limite, indisponibilité, timeout) ; ni secret, ni
+  jeton, ni corps de réponse brut dans les messages ou les logs. Le `from` du
+  message n'est **pas** imposé dans l'appel Graph (l'adresse affichée est celle
+  de la boîte Exchange ; imposer un `from` différent expose à
+  `ErrorSendAsDenied` — le modèle FortiUpgrade ne le fait pas).
+- **Test d'envoi** : bouton dans `/admin/security` (section Alertes), utilisant
+  **exactement** le transport sélectionné, la configuration persistée et le
+  secret réel ; message de test dédié (« Test de configuration email »,
+  transport, instance, date) sans aucune information sensible.
+- **Moteur Trivy inchangé** : `send_delta_email` reste le point d'envoi unique et
+  ne connaît que `EmailTransport` (SMTP ou Microsoft 365) ; transport incomplet →
+  aucun envoi, événement marqué en échec, **baseline et delta intacts** (un échec
+  ou une absence de transport ne rejoue jamais une alerte). Aucun email sans
+  changement, un seul email par synchronisation.
+- **SSRF** : l'hôte SMTP est une entrée administrateur assumée (relais interne
+  d'entreprise) — protocole strict (nom d'hôte uniquement, ni schéma ni URL, ni
+  espace), port borné 1–65535, aucune utilisation comme URL HTTP ; les endpoints
+  Graph ne sont pas configurables. Rejet explicite d'un « URL générique ».
+- **Backup** : `secrets/` est inclus dans `scripts/backup.sh` (archive 0600,
+  comme la clé de session) et sa sensibilité est documentée ; la configuration
+  non sensible vit déjà dans `hub.sqlite`.
+- **Standalone** : aucun volume ni conteneur supplémentaire — les secrets vivent
+  dans le volume `hub_data` existant ; **aucune variable email obligatoire**,
+  une instance qui ne configure rien fonctionne normalement (page Alertes
+  explicite : « transport incomplet »).
+- **Sans redémarrage** : la configuration et les secrets sont relus à chaque
+  envoi (pas de cache) — un changement prend effet immédiatement, sans restart
+  ni redéploiement.
+
+**Alternatives.** Secrets en base (même chiffrés) : rejeté — la clé de
+chiffrement devrait vivre ailleurs de toute façon, pour un bénéfice nul.
+Secrets uniquement par variables d'environnement : rejeté — c'est le point de
+friction à supprimer (Portainer), et une variable survivante devient une seconde
+source de vérité silencieuse. Volume secret supplémentaire (modèle
+`/opt/fortios/*-secrets`) : rejeté — le répertoire de données est déjà persistant,
+sauvegardé et initialisé par l'image ; un second volume compliquerait le
+standalone sans rien protéger de plus. Chiffrement applicatif des secrets :
+rejeté — la clé serait à côté du chiffré, complexité sans gain réel face à un
+accès déjà restreint au conteneur (uid 1000). Multi-transport simultané,
+carnet d'adresses, `from` Graph forcé, SDK Microsoft : rejetés — non demandés
+(minimum sufficient change). `from` Graph : voir ci-dessus (risque
+`ErrorSendAsDenied` démontré).
+
+**Conséquences.** Le VPS peut passer à un transport configuré en webapp
+(le mot de passe SMTP en variable continue de fonctionner en bootstrap) ; le
+standalone devient entièrement configurable depuis Portainer *sans* variables
+email. Les sauvegardes contiennent désormais des secrets email : elles restent en
+0600 et doivent être protégées comme la clé de session. La restauration d'une
+base V1.6 dans un Hub V1.6.1 est directe (clés additives) ; l'inverse exige de
+revenir à l'image V1.6 **et** de ne pas compter sur les clés inconnues (elles
+sont ignorées, aucun secret n'y transite).

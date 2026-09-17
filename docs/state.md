@@ -1,10 +1,11 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.6.0 livrée — surveillance Trivy (ingestion de l'artefact CI,
-baseline/delta, section `/admin/security`, alertes email sur changement), en plus
-du branding configurable, de la vue Liste et du contrôle Trivy en CI ; aucune
-action ouverte**.
+Statut : **V1.6.1 livrée — transport email administrable (SMTP ou Microsoft 365
+configurable dans `/admin/security`, secrets hors base, test d'envoi)**, en plus
+de la surveillance Trivy (ingestion de l'artefact CI, baseline/delta, alertes sur
+changement), du branding configurable, de la vue Liste et du contrôle Trivy en
+CI ; aucune action ouverte.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -13,17 +14,28 @@ action ouverte**.
 
 ## Version et périmètre
 
+- **V1.6.1 (2026-09-17)** : **transport email administrable** — le choix
+  **SMTP** ou **Microsoft 365 (Graph)** se fait dans `/admin/security`, avec les
+  paramètres saisis dans la webapp, un **test d'envoi** réel et une prise en
+  compte immédiate (aucun redémarrage, aucune variable Portainer). Les secrets
+  (mot de passe SMTP, secret client Microsoft 365) sont stockés **hors base**
+  dans `secrets/` du répertoire de données (0600), jamais réaffichés (provenance
+  seulement), remplaçables et supprimables explicitement ; les variables
+  `HUB_SMTP_PASSWORD` / `HUB_MICROSOFT_CLIENT_SECRET` ne servent que de
+  bootstrap (l'admin est prioritaire). Les alertes Trivy utilisent le transport
+  sélectionné ; migration V1.6 → V1.6.1 purement additive (voir D23,
+  exploitation §16).
 - **V1.6 (2026-09-17)** : **surveillance de l'image par le Hub** — il **consomme**
   l'artefact `trivy-report` de la CI (jamais de scan côté Hub, aucun accès
   Docker), valide strictement le rapport, publie un état (baseline silencieuse,
   puis delta : apparitions, disparitions, changements de sévérité), l'affiche dans
   `/admin/security` (état + vulnérabilités actionnables) et n'envoie **qu'un seul
-  email — uniquement en cas de changement** (SMTP ; filtres par sévérité/type ;
-  renvoi possible après échec). Planification interne (thread + verrou
-  inter-process, horaire au plus ; aucun service supplémentaire, standalone
-  inchangé). **Désactivée par défaut** ; activable seulement avec
-  `HUB_GITHUB_TOKEN` (lecture seule, portée `Actions: Read`) et, pour les emails,
-  `HUB_SMTP_PASSWORD` — jamais en base ni rendus (voir D22, exploitation §16).
+  email — uniquement en cas de changement** (filtres par sévérité/type ; renvoi
+  possible après échec). Planification interne (thread + verrou inter-process,
+  horaire au plus ; aucun service supplémentaire, standalone inchangé).
+  **Désactivée par défaut** ; activable seulement avec `HUB_GITHUB_TOKEN`
+  (lecture seule, portée `Actions: Read`) et un transport email complet — jamais
+  en base ni rendus (voir D22, exploitation §16).
 - **CI (2026-09-17)** : **GitHub Actions** — `.github/workflows/ci.yml` : job
   `tests` (suite pytest complète, bloquant) puis job `security-scan` (**Trivy
   informatif** sur l'image réellement produite : paquets OS + bibliothèques
@@ -109,15 +121,21 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   `libpcre2-8-0`, `libsqlite3-0`) — **0 côté Python** ; la base du jour porte
   encore ces versions, le finding sera résolu par un rafraîchissement du digest
   `python:3.12-slim` quand Debian publiera les correctifs.
-- **Surveillance de l'image (V1.6, D22)** : le Hub **consomme** l'artefact
-  `trivy-report` (aucun scan côté Hub) et affiche l'état dans
-  `/admin/security` — baseline silencieuse à la première ingestion, puis delta
-  (apparitions, disparitions, changements de sévérité) ; **un seul email par
-  synchronisation, uniquement en cas de changement** ; synchronisation interne
-  horaire (thread + verrou inter-process, standalone inchangé) ; **désactivée par
-  défaut** (nécessite `HUB_GITHUB_TOKEN` en lecture seule et, pour les emails,
-  `HUB_SMTP_PASSWORD`). État au 2026-09-17 : validée en réel sur le run CI
-  `35253281173` (baseline 3 CRITICAL / 10 HIGH, idempotence vérifiée).
+- **Surveillance de l'image (V1.6, D22 — transport V1.6.1, D23)** : le Hub
+  **consomme** l'artefact `trivy-report` (aucun scan côté Hub) et affiche l'état
+  dans `/admin/security` — baseline silencieuse à la première ingestion, puis
+  delta (apparitions, disparitions, changements de sévérité) ; **un seul email
+  par synchronisation, uniquement en cas de changement** ; synchronisation
+  interne horaire (thread + verrou inter-process, standalone inchangé) ;
+  **désactivée par défaut** (nécessite `HUB_GITHUB_TOKEN` en lecture seule et un
+  transport email complet). **Transport email (V1.6.1)** : SMTP ou Microsoft 365
+  (Graph, `Mail.Send`), configurable dans l'admin avec test d'envoi ; secrets
+  dans `runtime/data/secrets/` (0600, hors base, provenance affichée,
+  `HUB_SMTP_PASSWORD`/`HUB_MICROSOFT_CLIENT_SECRET` en bootstrap seulement).
+  État au 2026-09-17 : validée en réel sur le run CI `35253281173` (baseline
+  3 CRITICAL / 10 HIGH, idempotence vérifiée) ; transport V1.6.1 vérifié sur
+  instance locale (SMTP réel factice + Microsoft 365 simulé) et en production
+  après déploiement.
 - **Administration** : compte unique créé au premier accès (`/admin/setup`),
   sessions serveur, CSRF, verrouillage après échecs.
 - **Migration de base** : schéma en `user_version = 3` (migration V1.1 appliquée
