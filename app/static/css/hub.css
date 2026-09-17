@@ -580,6 +580,22 @@ table.admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .form-actions { display: flex; gap: 0.7rem; align-items: center; margin-top: 1.1rem; flex-wrap: wrap; }
 .checkbox-row { display: flex; align-items: center; gap: 0.55rem; font-size: 0.9rem; color: var(--text); }
 
+/* --- Transport email (Sécurité → Alertes) --------------------------------- */
+
+.panel-subtitle { margin: 1.3rem 0 0.4rem; font-size: 0.94rem; font-weight: 620; }
+.transport-block {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 0.9rem 1rem 0.5rem; margin: 0.9rem 0 0;
+}
+.transport-block legend { padding: 0 0.45rem; color: var(--muted); font-size: 0.85rem; }
+.transport-block.is-active { border-color: var(--border-strong); background: var(--panel-2); }
+.secret-actions {
+  margin-top: 1.1rem; border-top: 1px solid var(--border); padding-top: 0.9rem;
+  display: grid; gap: 0.55rem;
+}
+.secret-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.7rem; font-size: 0.88rem; color: var(--muted); }
+.secret-row strong { color: var(--text); font-weight: 600; }
+
 .select-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; }
 .select-row .select { flex: 1 1 200px; }
 

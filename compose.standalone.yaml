@@ -45,11 +45,16 @@ services:
       # Libellé du header, purement visuel (défaut : « HUB ») — à saisir dans les
       # Environment variables Portainer pour personnaliser une instance.
       HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
-      # Surveillance Trivy (optionnelle) : jeton GitHub en lecture seule et mot de
-      # passe SMTP, fournis ici ou dans les Environment variables Portainer ; vides
-      # = fonction indisponible et désactivée par défaut.
+      # Surveillance Trivy (optionnelle) : jeton GitHub en lecture seule, fourni
+      # ici ou dans les Environment variables Portainer ; vide = fonction
+      # indisponible et désactivée par défaut.
       HUB_GITHUB_TOKEN: "${HUB_GITHUB_TOKEN:-}"
+      # Secrets email : bootstrap uniquement — le transport email (SMTP ou
+      # Microsoft 365) et ses secrets se configurent dans l'administration
+      # (Sécurité → Alertes), persistés dans le volume hub_data. Aucune variable
+      # n'est nécessaire pour l'usage normal (voir D23).
       HUB_SMTP_PASSWORD: "${HUB_SMTP_PASSWORD:-}"
+      HUB_MICROSOFT_CLIENT_SECRET: "${HUB_MICROSOFT_CLIENT_SECRET:-}"
       # Nom porté par le certificat : validé à l'import du PKCS#12/PEM.
       HUB_TLS_HOSTNAME: "${HUB_HOSTNAME:?HUB_HOSTNAME est requis (nom DNS du Hub)}"
       # TLS direct : gunicorn sert HTTPS sur le port interne, l'activation d'un

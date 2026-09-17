@@ -61,11 +61,20 @@ fi
 if [ -f "$DATA_DIR/.secret_key" ]; then
   cp -a "$DATA_DIR/.secret_key" "$TMP/secret_key"
 fi
+# Secrets email administrables (V1.6.1) : mot de passe SMTP et secret client
+# Microsoft 365 saisis dans l'administration — sensibles, comme la clé de session.
+mkdir -p "$TMP/secrets"
+if [ -d "$DATA_DIR/secrets" ]; then
+  cp -a "$DATA_DIR/secrets/." "$TMP/secrets/" 2>/dev/null || true
+fi
+chmod 700 "$TMP/secrets"
 cat > "$TMP/MANIFEST.txt" <<EOF
 SNS Hub — sauvegarde $STAMP
 - hub.sqlite : base applicative (applications, catégories, sessions, compte admin)
 - uploads/   : screenshots du catalogue
 - secret_key : clé de signature des sessions (sensible)
+- secrets/   : secrets email administrés — mot de passe SMTP, secret client
+               Microsoft 365 (sensibles ; l'archive est en 0600)
 - certificats : archive séparée hub-certificates-$STAMP.tar.gz (clé privée, root)
 Restauration : voir docs/operations.md (§ Sauvegarde et restauration)
 EOF

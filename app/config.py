@@ -79,7 +79,11 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         # LECTURE SEULE (portée Actions) : le téléchargement d'artefact l'exige,
         # même pour un dépôt public (vérifié).
         "GITHUB_TOKEN": os.environ.get("HUB_GITHUB_TOKEN", "").strip(),
+        # Secrets email (V1.6.1) : **bootstrap uniquement** — la configuration
+        # enregistrée dans l'administration (fichiers de `HUB_DATA_DIR/secrets/`)
+        # est prioritaire dès qu'elle existe (voir app/mailsecrets.py).
         "SMTP_PASSWORD": os.environ.get("HUB_SMTP_PASSWORD", ""),
+        "MICROSOFT_CLIENT_SECRET": os.environ.get("HUB_MICROSOFT_CLIENT_SECRET", ""),
         "TRIVY_SCHEDULER_ENABLED": _env_bool("HUB_TRIVY_SCHEDULER", True),
         "MAX_CONTENT_LENGTH": 8 * 1024 * 1024,  # requête HTTP complète
         "MAX_UPLOAD_BYTES": 4 * 1024 * 1024,  # screenshot

@@ -31,8 +31,12 @@ Règles exactes appliquées ici :
   peut être renvoyé.
 
 La feature est **désactivée par défaut** ; l'activation depuis l'admin exige un
-jeton GitHub en lecture seule (`HUB_GITHUB_TOKEN`) et, pour les emails, une
-configuration SMTP complète (`HUB_SMTP_PASSWORD` côté déploiement, jamais en base).
+jeton GitHub en lecture seule (`HUB_GITHUB_TOKEN`) et, pour les emails, un
+transport email complet — SMTP **ou** Microsoft 365 — configurable dans la
+webapp (V1.6.1, D23). Les secrets (mot de passe SMTP, secret client Microsoft
+365) vivent dans des fichiers dédiés du répertoire de données (voir
+`app/mailsecrets.py`) ; les variables d'environnement ne servent que de
+bootstrap.
 """
 
 from __future__ import annotations
@@ -55,6 +59,13 @@ MANUAL_SYNC_MIN_INTERVAL_SECONDS = 60
 MAX_EVENTS_DISPLAY = 20
 LOCK_FILENAME = "trivy-sync.lock"
 MAX_RECIPIENTS = 10
+MAX_DISPLAY_NAME = 80
+
+# Transports email (D23) : un seul actif à la fois, persisté en base.
+TRANSPORT_SMTP = "smtp"
+TRANSPORT_MICROSOFT365 = "microsoft365"
+EMAIL_TRANSPORTS = (TRANSPORT_SMTP, TRANSPORT_MICROSOFT365)
+M365_DEFAULT_DISPLAY_NAME = "SNS Hub"
 
 SETTING_KEYS = (
     "security.sync_enabled",
@@ -65,12 +76,18 @@ SETTING_KEYS = (
     "security.severity_critical",
     "security.severity_high",
     "security.recipients",
+    "security.email_transport",
     "security.smtp_host",
     "security.smtp_port",
     "security.smtp_security",
     "security.smtp_username",
     "security.smtp_from",
+    "security.smtp_display_name",
     "security.smtp_timeout",
+    "security.m365_tenant_id",
+    "security.m365_client_id",
+    "security.m365_mailbox",
+    "security.m365_display_name",
 )
 
 DEFAULT_VALUES = {
@@ -82,16 +99,26 @@ DEFAULT_VALUES = {
     "security.severity_critical": "1",
     "security.severity_high": "1",
     "security.recipients": "",
+    "security.email_transport": TRANSPORT_SMTP,
     "security.smtp_host": "",
     "security.smtp_port": "587",
     "security.smtp_security": "starttls",
     "security.smtp_username": "",
     "security.smtp_from": "",
+    "security.smtp_display_name": "",
     "security.smtp_timeout": "15",
+    "security.m365_tenant_id": "",
+    "security.m365_client_id": "",
+    "security.m365_mailbox": "",
+    "security.m365_display_name": M365_DEFAULT_DISPLAY_NAME,
 }
 
 _EMAIL_RE = re.compile(r"^[^@\s,;<>]{1,64}@[^@\s,;<>]{1,190}\.[A-Za-z]{2,24}$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,253})$")
+_GUID_RE = re.compile(
+    r"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+)
+_TENANT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 EVENT_LABELS = {
     "baseline": "Baseline initialisée",
@@ -114,12 +141,18 @@ class SecuritySettings:
     notify_severity: bool = True
     severities: tuple[str, ...] = trivy.ALLOWED_SEVERITIES
     recipients: tuple[str, ...] = ()
+    email_transport: str = TRANSPORT_SMTP
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_security: str = "starttls"
     smtp_username: str = ""
     smtp_from: str = ""
+    smtp_display_name: str = ""
     smtp_timeout: int = 15
+    m365_tenant_id: str = ""
+    m365_client_id: str = ""
+    m365_mailbox: str = ""
+    m365_display_name: str = M365_DEFAULT_DISPLAY_NAME
 
     def smtp_complete(self, *, password_present: bool) -> bool:
         """Configuration SMTP exploitable : hôte, port, expéditeur, destinataires."""
@@ -128,6 +161,24 @@ class SecuritySettings:
         if self.smtp_username and not password_present:
             return False
         return True
+
+    def m365_complete(self, *, secret_present: bool) -> bool:
+        """Configuration Microsoft 365 exploitable : identité, boîte, secret, destinataires."""
+        if not (self.m365_tenant_id and self.m365_client_id and self.m365_mailbox):
+            return False
+        if not secret_present or not self.recipients:
+            return False
+        return True
+
+    def transport_complete(
+        self, *, smtp_password_present: bool, m365_secret_present: bool
+    ) -> bool:
+        """Le transport **sélectionné** est-il exploitable ? (l'autre n'entre pas en jeu)"""
+        if self.email_transport == TRANSPORT_MICROSOFT365:
+            return self.m365_complete(secret_present=m365_secret_present)
+        if self.email_transport == TRANSPORT_SMTP:
+            return self.smtp_complete(password_present=smtp_password_present)
+        return False
 
     def notifies(self, kind: str, severity: str) -> bool:
         """Un événement est notifiable selon son type et sa sévérité effective."""
@@ -179,16 +230,33 @@ def load_settings(connection) -> SecuritySettings:
         notify_severity=_as_bool(values["security.notify_severity"]),
         severities=severities,
         recipients=recipients,
+        email_transport=values["security.email_transport"].strip().lower(),
         smtp_host=values["security.smtp_host"].strip(),
         smtp_port=port,
         smtp_security=values["security.smtp_security"].strip().lower(),
         smtp_username=values["security.smtp_username"].strip(),
         smtp_from=values["security.smtp_from"].strip(),
+        smtp_display_name=values["security.smtp_display_name"].strip(),
         smtp_timeout=timeout,
+        m365_tenant_id=values["security.m365_tenant_id"].strip(),
+        m365_client_id=values["security.m365_client_id"].strip(),
+        m365_mailbox=values["security.m365_mailbox"].strip(),
+        m365_display_name=values["security.m365_display_name"].strip()
+        or M365_DEFAULT_DISPLAY_NAME,
     )
 
 
-def validate_settings(form, *, github_token_present: bool, smtp_password_present: bool) -> tuple[dict, list[str]]:
+def _clean_display_name(value: str) -> str:
+    return " ".join((value or "").split())
+
+
+def validate_settings(
+    form,
+    *,
+    github_token_present: bool,
+    smtp_password_present: bool,
+    m365_secret_present: bool = False,
+) -> tuple[dict, list[str]]:
     """Valide le formulaire admin ; retourne (valeurs, erreurs). Aucun secret ici."""
     errors: list[str] = []
     flags = {
@@ -205,6 +273,11 @@ def validate_settings(form, *, github_token_present: bool, smtp_password_present
             "Surveillance impossible : le jeton GitHub (HUB_GITHUB_TOKEN, lecture seule) "
             "n'est pas fourni au déploiement."
         )
+
+    transport = (form.get("email_transport") or TRANSPORT_SMTP).strip().lower()
+    if transport not in EMAIL_TRANSPORTS:
+        errors.append("Transport email invalide (smtp ou microsoft365).")
+        transport = TRANSPORT_SMTP
 
     raw_recipients = (form.get("recipients") or "").replace("\r", "\n")
     recipients = [
@@ -241,6 +314,9 @@ def validate_settings(form, *, github_token_present: bool, smtp_password_present
     from_address = (form.get("smtp_from") or "").strip()
     if from_address and not _EMAIL_RE.fullmatch(from_address):
         errors.append("Expéditeur invalide.")
+    smtp_display_name = _clean_display_name(form.get("smtp_display_name") or "")
+    if len(smtp_display_name) > MAX_DISPLAY_NAME:
+        errors.append(f"Nom d'affichage SMTP : {MAX_DISPLAY_NAME} caractères au maximum.")
     raw_timeout = (form.get("smtp_timeout") or "").strip()
     timeout = 15
     if raw_timeout:
@@ -252,20 +328,50 @@ def validate_settings(form, *, github_token_present: bool, smtp_password_present
             if not 5 <= timeout <= 60:
                 errors.append("Délai SMTP hors plage (5-60 secondes).")
 
+    tenant_id = (form.get("m365_tenant_id") or "").strip()
+    if tenant_id and not _TENANT_RE.fullmatch(tenant_id):
+        errors.append("Tenant ID Microsoft 365 invalide (identifiant ou domaine, sans espace).")
+    client_id = (form.get("m365_client_id") or "").strip()
+    if client_id and not _GUID_RE.fullmatch(client_id):
+        errors.append("Client ID Microsoft 365 invalide (GUID attendu).")
+    mailbox = (form.get("m365_mailbox") or "").strip()
+    if mailbox and not (_EMAIL_RE.fullmatch(mailbox) or _GUID_RE.fullmatch(mailbox)):
+        errors.append("Boîte Microsoft 365 invalide (adresse email attendue).")
+    m365_display_name = _clean_display_name(form.get("m365_display_name") or "")
+    if len(m365_display_name) > MAX_DISPLAY_NAME:
+        errors.append(
+            f"Nom d'affichage Microsoft 365 : {MAX_DISPLAY_NAME} caractères au maximum."
+        )
+    m365_display_name = m365_display_name or M365_DEFAULT_DISPLAY_NAME
+
     if flags["security.notifications_enabled"]:
         if not recipients:
             errors.append("Notifications activées sans destinataire.")
-        if not host:
-            errors.append("Notifications activées sans serveur SMTP.")
-        if not from_address:
-            errors.append("Notifications activées sans expéditeur.")
-        if username and not smtp_password_present:
-            errors.append(
-                "Notifications activées avec un identifiant SMTP, mais aucun mot de passe "
-                "n'est fourni au déploiement (HUB_SMTP_PASSWORD)."
-            )
         if not (flags["security.severity_critical"] or flags["security.severity_high"]):
             errors.append("Notifications activées sans aucune sévérité suivie.")
+        if transport == TRANSPORT_SMTP:
+            if not host:
+                errors.append("Notifications activées sans serveur SMTP.")
+            if not from_address:
+                errors.append("Notifications activées sans expéditeur.")
+            if username and not smtp_password_present:
+                errors.append(
+                    "Notifications activées avec un identifiant SMTP, mais aucun mot de passe "
+                    "SMTP n'est configuré (le saisir dans cette page, ou fournir "
+                    "HUB_SMTP_PASSWORD au déploiement)."
+                )
+        else:
+            if not tenant_id:
+                errors.append("Notifications activées sans Tenant ID Microsoft 365.")
+            if not client_id:
+                errors.append("Notifications activées sans Client ID Microsoft 365.")
+            if not mailbox:
+                errors.append("Notifications activées sans boîte Microsoft 365.")
+            if not m365_secret_present:
+                errors.append(
+                    "Notifications activées sans secret client Microsoft 365 (le saisir dans "
+                    "cette page, ou fournir HUB_MICROSOFT_CLIENT_SECRET au déploiement)."
+                )
 
     values = {
         "security.sync_enabled": "1" if flags["security.sync_enabled"] else "0",
@@ -276,12 +382,18 @@ def validate_settings(form, *, github_token_present: bool, smtp_password_present
         "security.severity_critical": "1" if flags["security.severity_critical"] else "0",
         "security.severity_high": "1" if flags["security.severity_high"] else "0",
         "security.recipients": "\n".join(recipients),
+        "security.email_transport": transport,
         "security.smtp_host": host,
         "security.smtp_port": str(port),
         "security.smtp_security": security,
         "security.smtp_username": username,
         "security.smtp_from": from_address,
+        "security.smtp_display_name": smtp_display_name,
         "security.smtp_timeout": str(timeout),
+        "security.m365_tenant_id": tenant_id,
+        "security.m365_client_id": client_id,
+        "security.m365_mailbox": mailbox,
+        "security.m365_display_name": m365_display_name,
     }
     return values, errors
 

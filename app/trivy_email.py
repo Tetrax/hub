@@ -1,16 +1,17 @@
-"""Emails de changement de sécurité : composition SNS + transport SMTP.
+"""Emails de changement de sécurité : composition SNS + transport configurable.
 
 Un email par synchronisation au **maximum**, et uniquement si un changement
 pertinent existe (voir `app/trivy_monitor.py`). L'envoi ne lève jamais : toutes les
 pannes (configuration incomplète, DNS, connexion, STARTTLS, authentification,
 timeout, message invalide) sont converties en résultat exploitable, journalisées
-sans le mot de passe, et n'affectent ni la baseline ni le reste de l'application.
+sans secret, et n'affectent ni la baseline ni le reste de l'application.
 
-Transport retenu (V1.6, D22) : **SMTP standard** (implicite TLS, STARTTLS ou sans
-chiffrement explicitement autorisé), la primitive éprouvée de FortiUpgrade. Le mot
-de passe vient du déploiement (`HUB_SMTP_PASSWORD`), jamais de la base, jamais d'une
-réponse HTTP, jamais d'un log. Microsoft 365 / Graph est documenté comme évolution
-ultérieure : l'intégrer doublerait le chantier pour un besoin non démontré.
+Transport (V1.6.1, D23) : **SMTP** ou **Microsoft 365 / Graph**, sélectionné dans
+l'administration et unique à la fois. Le moteur Trivy ne connaît que
+`send_delta_email` ; les détails de chaque transport vivent ici et dans
+`app/graphmail.py`. Les secrets (mot de passe SMTP, secret client Microsoft 365)
+viennent de `app/mailsecrets.py` (fichiers dédiés du répertoire de données,
+l'environnement ne servant que de bootstrap) et ne sont jamais rendus ni loggés.
 
 Le rendu utilise la direction artistique SNS en HTML simple (tables, styles en
 ligne) : lisible dans Outlook, sans CSS exotique. Toute valeur dynamique est
@@ -20,13 +21,17 @@ l'ingestion, re-vérifiée ici.
 
 from __future__ import annotations
 
+import datetime as dt
 import html
 import smtplib
+import socket
 import ssl
 import urllib.parse
+from dataclasses import dataclass, field
 from email.message import EmailMessage
+from email.utils import formataddr
 
-from . import trivy_monitor
+from . import graphmail, mailsecrets, trivy_monitor
 
 SEVERITY_LABELS = {"critical": "CRITICAL", "high": "HIGH"}
 KIND_LABELS = {
@@ -35,6 +40,58 @@ KIND_LABELS = {
     "severity_up": "Aggravations",
     "severity_down": "Atténuations",
 }
+TRANSPORT_LABELS = {
+    trivy_monitor.TRANSPORT_SMTP: "SMTP",
+    trivy_monitor.TRANSPORT_MICROSOFT365: "Microsoft 365",
+}
+
+
+@dataclass(frozen=True)
+class EmailSecrets:
+    """Secrets effectifs (provenance incluse) — jamais rendus, jamais loggés."""
+
+    smtp_password: str = field(default="", repr=False)
+    smtp_source: str = ""
+    m365_secret: str = field(default="", repr=False)
+    m365_source: str = ""
+
+    @property
+    def smtp_present(self) -> bool:
+        return bool(self.smtp_password)
+
+    @property
+    def m365_present(self) -> bool:
+        return bool(self.m365_secret)
+
+
+def transport_label(settings: trivy_monitor.SecuritySettings) -> str:
+    return TRANSPORT_LABELS.get(settings.email_transport, settings.email_transport or "—")
+
+
+def load_email_state(app) -> tuple[trivy_monitor.SecuritySettings, EmailSecrets]:
+    """Réglages persistés + secrets effectifs (admin prioritaire, env en bootstrap)."""
+    from . import db
+
+    connection = db.connect(app.config["DB_PATH"])
+    try:
+        settings = trivy_monitor.load_settings(connection)
+    finally:
+        connection.close()
+    data_dir = app.config["DATA_DIR"]
+    smtp_password, smtp_source = mailsecrets.effective_secret(
+        data_dir, mailsecrets.SMTP_PASSWORD, app.config.get("SMTP_PASSWORD") or ""
+    )
+    m365_secret, m365_source = mailsecrets.effective_secret(
+        data_dir,
+        mailsecrets.MICROSOFT365_CLIENT_SECRET,
+        app.config.get("MICROSOFT_CLIENT_SECRET") or "",
+    )
+    return settings, EmailSecrets(
+        smtp_password=smtp_password,
+        smtp_source=smtp_source,
+        m365_secret=m365_secret,
+        m365_source=m365_source,
+    )
 
 
 def _safe_url(value: str) -> str:
@@ -224,6 +281,62 @@ def compose_bodies(events: list[dict], scan, *, base_url: str, run_url: str = ""
     return text, html_body
 
 
+def _instance_name(app) -> str:
+    hostname = (app.config.get("TLS_HOSTNAME") or "").strip()
+    if hostname:
+        return hostname
+    try:
+        return socket.gethostname() or "inconnue"
+    except OSError:
+        return "inconnue"
+
+
+def compose_test_bodies(settings: trivy_monitor.SecuritySettings, *, instance: str) -> tuple[str, str, str]:
+    """Email de test : clairement identifié, sans aucune information sensible."""
+    label = transport_label(settings)
+    now = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    subject = "[SNS Hub] Test des notifications"
+    text = (
+        "SNS Hub — Test de configuration email\n\n"
+        "Ce message confirme que le transport email configuré fonctionne.\n\n"
+        f"Transport : {label}\n"
+        f"Instance : {instance}\n"
+        f"Date : {now}\n"
+        f"Destinataires : {len(settings.recipients)}\n"
+    )
+    cell = lambda value: html.escape(value, quote=True)  # noqa: E731 — lisibilité locale
+    row = (
+        '<tr><td style="padding:6px 0;color:#5A5A61;font-size:13px;width:140px;">{key}</td>'
+        '<td style="padding:6px 0;color:#141417;font-size:14px;">{value}</td></tr>'
+    )
+    html_body = (
+        '<html><body style="margin:0;padding:0;background:#ECECEE;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="background:#ECECEE;padding:24px 12px;"><tr><td align="center">'
+        '<table role="presentation" width="640" cellpadding="0" cellspacing="0" '
+        'style="max-width:640px;width:100%;background:#FFFFFF;border-radius:14px;'
+        'overflow:hidden;font-family:Segoe UI,Arial,sans-serif;">'
+        '<tr><td style="background:#0B0B0D;padding:20px 28px;">'
+        '<span style="color:#F4A8C9;font-size:20px;font-weight:700;">SNS</span>'
+        '<span style="color:#ECECEE;font-size:15px;">&nbsp;| Test des notifications</span>'
+        "</td></tr>"
+        '<tr><td style="padding:22px 28px;">'
+        '<p style="margin:0 0 14px;color:#141417;font-size:15px;">'
+        "Ce message confirme que le transport email configuré fonctionne.</p>"
+        '<table role="presentation" cellpadding="0" cellspacing="0">'
+        + row.format(key="Transport", value=cell(label))
+        + row.format(key="Instance", value=cell(instance))
+        + row.format(key="Date", value=cell(now))
+        + row.format(key="Destinataires", value=str(len(settings.recipients)))
+        + "</table></td></tr>"
+        '<tr><td style="background:#141417;padding:14px 28px;color:#9A9AA1;font-size:12px;">'
+        "SNS Hub — email de test, envoyé depuis l'administration."
+        "</td></tr>"
+        "</table></td></tr></table></body></html>"
+    )
+    return subject, text, html_body
+
+
 def _smtp_send(settings: trivy_monitor.SecuritySettings, password: str, message: EmailMessage) -> tuple[bool, str]:
     """Envoi SMTP : ne lève jamais, ne journalise jamais le mot de passe."""
     security = settings.smtp_security
@@ -267,7 +380,11 @@ def _build_message(
 ) -> EmailMessage:
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = settings.smtp_from
+    sender = settings.smtp_from
+    display_name = settings.smtp_display_name
+    if display_name and not any(character in display_name for character in ("\r", "\n", "\0")):
+        sender = formataddr((display_name, settings.smtp_from))
+    message["From"] = sender
     message["To"] = ", ".join(settings.recipients)
     message.set_content(text)
     message.add_alternative(html_body, subtype="html")
@@ -280,71 +397,83 @@ def _base_url(app) -> str:
     return f"https://{hostname}" if hostname else ""
 
 
+def send_via_transport(
+    settings: trivy_monitor.SecuritySettings,
+    secrets: EmailSecrets,
+    *,
+    subject: str,
+    text: str,
+    html_body: str,
+) -> tuple[bool, str]:
+    """Envoi par le transport sélectionné ; retourne (ok, message nettoyé)."""
+    if settings.email_transport == trivy_monitor.TRANSPORT_MICROSOFT365:
+        ok, message, _code = graphmail.send(
+            tenant_id=settings.m365_tenant_id,
+            client_id=settings.m365_client_id,
+            client_secret=secrets.m365_secret,
+            mailbox=settings.m365_mailbox,
+            recipients=settings.recipients,
+            subject=subject,
+            text_body=text,
+            html_body=html_body,
+            timeout=settings.smtp_timeout,
+        )
+        return ok, message
+    if settings.email_transport == trivy_monitor.TRANSPORT_SMTP:
+        try:
+            message = _build_message(settings, subject, text, html_body)
+        except (ValueError, TypeError, AttributeError):
+            return False, "Message email invalide."
+        return _smtp_send(settings, secrets.smtp_password, message)
+    return False, "Transport email inconnu."
+
+
+def _transport_incomplete(settings: trivy_monitor.SecuritySettings) -> str:
+    return f"Transport email incomplet ({transport_label(settings)})."
+
+
 def send_delta_email(app, events: list[dict], scan) -> tuple[bool, str]:
     """Compose et envoie l'email de changement. Retourne (ok, message nettoyé)."""
+    try:
+        settings, secrets = load_email_state(app)
+    except OSError:
+        return False, "Base de données illisible (configuration email indisponible)."
+    if not settings.notifications_enabled:
+        return False, "Notifications désactivées."
+    if not settings.transport_complete(
+        smtp_password_present=secrets.smtp_present, m365_secret_present=secrets.m365_present
+    ):
+        return False, _transport_incomplete(settings)
+    state: dict = {}
     try:
         from . import db
 
         connection = db.connect(app.config["DB_PATH"])
         try:
-            settings = trivy_monitor.load_settings(connection)
             state = trivy_monitor.load_state(connection) or {}
         finally:
             connection.close()
     except OSError:
-        return False, "Base de données illisible (configuration email indisponible)."
-    password = (app.config.get("SMTP_PASSWORD") or "").strip()
-    if not settings.notifications_enabled:
-        return False, "Notifications désactivées."
-    if not settings.smtp_complete(password_present=bool(password)):
-        return False, "Configuration SMTP incomplète ou invalide."
+        state = {}
     subject = compose_subject(events)
     try:
         text, html_body = compose_bodies(
             events, scan, base_url=_base_url(app), run_url=str(state.get("run_url") or "")
         )
-        message = _build_message(settings, subject, text, html_body)
     except (ValueError, TypeError, AttributeError):
         return False, "Message email invalide."
-    return _smtp_send(settings, password, message)
+    return send_via_transport(settings, secrets, subject=subject, text=text, html_body=html_body)
 
 
 def send_test_email(app) -> tuple[bool, str]:
     """Test d'envoi depuis l'admin : utilise exactement la configuration sauvegardée."""
     try:
-        from . import db
-
-        connection = db.connect(app.config["DB_PATH"])
-        try:
-            settings = trivy_monitor.load_settings(connection)
-        finally:
-            connection.close()
+        settings, secrets = load_email_state(app)
     except OSError:
         return False, "Base de données illisible (configuration email indisponible)."
-    password = (app.config.get("SMTP_PASSWORD") or "").strip()
-    if not settings.smtp_complete(password_present=bool(password)):
-        return False, "Configuration SMTP incomplète (serveur, expéditeur, destinataires)."
-    base_url = _base_url(app)
-    from .trivy import Scan
-
-    scan = Scan(image="", commit="", scanned_at="", findings=())
-    events = [
-        {
-            "kind": "new",
-            "severity": "high",
-            "summary": "Test d'envoi",
-            "detail": {
-                "cve": "CVE-0000-0000",
-                "package": "exemple",
-                "installed_version": "1.0",
-                "fixed_version": "1.1",
-                "advisory_url": "",
-            },
-        }
-    ]
-    try:
-        text, html_body = compose_bodies(events, scan, base_url=base_url)
-        message = _build_message(settings, "[SNS Hub] Test de notification sécurité", text, html_body)
-    except (ValueError, TypeError, AttributeError):
-        return False, "Message email invalide."
-    return _smtp_send(settings, password, message)
+    if not settings.transport_complete(
+        smtp_password_present=secrets.smtp_present, m365_secret_present=secrets.m365_present
+    ):
+        return False, _transport_incomplete(settings)
+    subject, text, html_body = compose_test_bodies(settings, instance=_instance_name(app))
+    return send_via_transport(settings, secrets, subject=subject, text=text, html_body=html_body)

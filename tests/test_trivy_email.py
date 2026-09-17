@@ -9,12 +9,13 @@ from __future__ import annotations
 import base64
 import email as email_module
 import email.policy  # sous-module requis par message_from_string(policy=...)
+import json
 import socket
 import threading
 
 import pytest
 
-from app import db, trivy_email, trivy_monitor
+from app import db, graphmail, mailsecrets, trivy_email, trivy_monitor
 from app.trivy import Scan
 
 
@@ -27,6 +28,7 @@ class FakeSmtp(threading.Thread):
         self.auth_ok = auth_ok
         self.advertise_auth = advertise_auth
         self.messages: list[str] = []
+        self.auth_attempts: list[str] = []
         self.socket = socket.socket()
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind(("127.0.0.1", 0))
@@ -83,6 +85,7 @@ class FakeSmtp(threading.Thread):
             elif upper.startswith("HELO") or upper.startswith("MAIL") or upper.startswith("RSET"):
                 client.sendall(b"250 OK\r\n")
             elif upper.startswith("AUTH"):
+                self.auth_attempts.append(text)
                 if not self.auth_ok:
                     client.sendall(b"535 auth failed\r\n")
                 elif upper.startswith("AUTH PLAIN") and len(text.split()) > 2:
@@ -310,7 +313,7 @@ def test_an_unreachable_server_is_a_clean_error(app, smtp_server):
 def test_an_incomplete_configuration_refuses_before_any_connection(app):
     configure(app, None, allow_errors=True)
     ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
-    assert not ok and "Configuration SMTP incomplète" in detail
+    assert not ok and "Transport email incomplet" in detail
 
 
 def test_notifications_disabled_refuses_cleanly(app, smtp_server):
@@ -329,14 +332,16 @@ def test_the_test_email_uses_the_saved_configuration(app, smtp_server):
     parsed = email_module.message_from_string(
         server.messages[0], policy=email_module.policy.default
     )
-    assert parsed["Subject"].startswith("[SNS Hub] Test")
-    assert "CVE-0000-0000" in server.messages[0]
+    assert parsed["Subject"] == "[SNS Hub] Test des notifications"
+    assert "Test de configuration email" in server.messages[0]
+    assert "Transport : SMTP" in server.messages[0]
+    assert "Instance :" in server.messages[0]
 
 
 def test_the_test_email_refuses_an_incomplete_configuration(app):
     configure(app, None, allow_errors=True)
     ok, detail = trivy_email.send_test_email(app)
-    assert not ok and "incomplète" in detail
+    assert not ok and "Transport email incomplet" in detail
 
 
 def test_no_secret_ever_appears_in_the_rendered_email(app, smtp_server):
@@ -346,3 +351,163 @@ def test_no_secret_ever_appears_in_the_rendered_email(app, smtp_server):
     trivy_email.send_test_email(app)
     for message in server.messages:
         assert "secret-smtp-a-ne-jamais-rendre" not in message
+
+
+# --- Secrets administrés (V1.6.1) ----------------------------------------------------
+
+
+def test_a_secret_stored_in_the_data_directory_authenticates(app, smtp_server):
+    server = smtp_server(advertise_auth=True)
+    configure(app, server, username="hub")
+    app.config["SMTP_PASSWORD"] = ""
+    mailsecrets.write_secret(
+        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    )
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert ok, detail
+    assert server.auth_attempts, "aucune authentification reçue"
+    payload = base64.b64decode(server.auth_attempts[0].split()[-1])
+    assert b"secret-administre" in payload
+
+
+def test_the_administrative_secret_wins_over_the_environment(app, smtp_server):
+    server = smtp_server(advertise_auth=True)
+    configure(app, server, username="hub")
+    app.config["SMTP_PASSWORD"] = "secret-d-environnement"
+    mailsecrets.write_secret(
+        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    )
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert ok, detail
+    payload = base64.b64decode(server.auth_attempts[0].split()[-1])
+    assert b"secret-administre" in payload
+    assert b"secret-d-environnement" not in payload
+
+
+def test_deleting_the_administrative_secret_falls_back_to_the_environment(app, smtp_server):
+    server = smtp_server(advertise_auth=True)
+    configure(app, server, username="hub")
+    app.config["SMTP_PASSWORD"] = "secret-d-environnement"
+    mailsecrets.write_secret(
+        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    )
+    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD)
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert ok, detail
+    payload = base64.b64decode(server.auth_attempts[0].split()[-1])
+    assert b"secret-d-environnement" in payload
+
+
+def test_the_smtp_display_name_is_used_in_the_from_header(app, smtp_server):
+    server = smtp_server()
+    configure(app, server, smtp_display_name="SNS Hub")
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert ok, detail
+    parsed = email_module.message_from_string(
+        server.messages[0], policy=email_module.policy.default
+    )
+    assert parsed["From"] == "SNS Hub <sns-hub@valdev.me>"
+
+
+# --- Transport Microsoft 365 (V1.6.1) -------------------------------------------------
+
+
+def configure_m365(app, *, secret="secret-client-microsoft-365", notifications=True, **overrides):
+    connection = db.connect(app.config["DB_PATH"])
+    form = {
+        "sync_enabled": "1",
+        "notifications_enabled": "1" if notifications else "0",
+        "notify_new": "1", "notify_resolved": "1", "notify_severity": "1",
+        "severity_critical": "1", "severity_high": "1",
+        "recipients": "equipe@valdev.me",
+        "email_transport": "microsoft365",
+        "m365_tenant_id": "contoso.onmicrosoft.com",
+        "m365_client_id": "11111111-2222-3333-4444-555555555555",
+        "m365_mailbox": "hub@example.com",
+        "m365_display_name": "SNS Hub",
+    }
+    form.update(overrides)
+    values, errors = trivy_monitor.validate_settings(
+        form,
+        github_token_present=True,
+        smtp_password_present=False,
+        m365_secret_present=bool(secret),
+    )
+    assert not errors, errors
+    trivy_monitor.save_settings(connection, values)
+    connection.close()
+    if secret:
+        mailsecrets.write_secret(
+            app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET, secret
+        )
+
+
+def test_a_microsoft365_delta_email_goes_through_graph(app, monkeypatch):
+    from test_graph_email import FakeOpener, FakeResponse, token_response
+
+    configure_m365(app)
+    fake = FakeOpener(token_response(), FakeResponse(202, b""))
+    monkeypatch.setattr(graphmail, "_urlopen", fake)
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert ok, detail
+    assert len(fake.requests) == 2
+    assert fake.requests[1].full_url == (
+        "https://graph.microsoft.com/v1.0/users/hub%40example.com/sendMail"
+    )
+    payload = json.loads(fake.requests[1].data.decode("utf-8"))
+    assert payload["message"]["subject"] == "[SNS Hub] Sécurité de l'image — 3 changements détectés"
+    assert payload["message"]["body"]["contentType"] == "HTML"
+    addresses = [
+        item["emailAddress"]["address"] for item in payload["message"]["toRecipients"]
+    ]
+    assert addresses == ["equipe@valdev.me"]
+
+
+def test_the_microsoft365_test_email_follows_the_selected_transport(app, monkeypatch):
+    from test_graph_email import FakeOpener, FakeResponse, token_response
+
+    configure_m365(app)
+    fake = FakeOpener(token_response(), FakeResponse(202, b""))
+    monkeypatch.setattr(graphmail, "_urlopen", fake)
+    ok, detail = trivy_email.send_test_email(app)
+    assert ok, detail
+    payload = json.loads(fake.requests[1].data.decode("utf-8"))
+    assert payload["message"]["subject"] == "[SNS Hub] Test des notifications"
+    assert "Microsoft 365" in payload["message"]["body"]["content"]
+
+
+def test_an_incomplete_microsoft365_transport_refuses_without_sending(app, monkeypatch):
+    from test_graph_email import FakeOpener
+
+    configure_m365(app)
+    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET)
+    fake = FakeOpener()
+    monkeypatch.setattr(graphmail, "_urlopen", fake)
+    ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
+    assert not ok and detail == "Transport email incomplet (Microsoft 365)."
+    assert fake.requests == []
+
+
+def test_switching_transport_keeps_the_other_transport_parameters(app, smtp_server):
+    server = smtp_server()
+    configure(app, server)
+    # Le formulaire réel soumet toujours les deux blocs : les valeurs de l'autre
+    # transport restent persistées lors d'une bascule (choix documenté, D23).
+    configure_m365(
+        app,
+        smtp_host="127.0.0.1", smtp_port=str(server.port), smtp_security="none",
+        smtp_username="", smtp_from="sns-hub@valdev.me", smtp_timeout="10",
+    )
+    settings, _secrets = trivy_email.load_email_state(app)
+    assert settings.email_transport == "microsoft365"
+    assert settings.smtp_host == "127.0.0.1"  # paramètres SMTP conservés
+    assert settings.m365_mailbox == "hub@example.com"
+    configure(
+        app, server, email_transport="smtp",
+        m365_tenant_id="contoso.onmicrosoft.com",
+        m365_client_id="11111111-2222-3333-4444-555555555555",
+        m365_mailbox="hub@example.com", m365_display_name="SNS Hub",
+    )
+    settings, _secrets = trivy_email.load_email_state(app)
+    assert settings.email_transport == "smtp"
+    assert settings.m365_mailbox == "hub@example.com"  # paramètres M365 conservés

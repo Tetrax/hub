@@ -27,6 +27,13 @@
   surveillance ci-dessous pour suivre l'image.
 </p>
 {% endif %}
+{% if settings.notifications_enabled and not transport_complete %}
+<p class="notice notice-error">
+  Notifications activées mais <strong>transport email incomplet</strong> ({{ transport_label }}) :
+  aucun email ne sera envoyé tant qu'il n'est pas complet. La synchronisation Trivy,
+  la baseline et le delta ne sont pas affectés.
+</p>
+{% endif %}
 
 <section class="panel">
   <h2 class="panel-title">État de l'image</h2>
@@ -141,45 +148,152 @@
         </label>
       </div>
     </div>
+
+    <h3 class="panel-subtitle">Transport email</h3>
+    <p class="form-hint">
+      Un seul transport actif à la fois — il est utilisé par les alertes Trivy et par
+      le test d'envoi. État du transport sélectionné :
+      <span class="state-pill {{ 'state-valid' if transport_complete else 'state-critical' }}">
+        {{ 'Complet' if transport_complete else 'Incomplet' }}
+      </span>
+    </p>
+    <div class="form-field">
+      <span class="form-label">Transport sélectionné</span>
+      <label class="checkbox-row">
+        <input type="radio" name="email_transport" value="smtp" data-transport-radio
+               {% if settings.email_transport != 'microsoft365' %}checked{% endif %}>
+        SMTP
+      </label>
+      <label class="checkbox-row">
+        <input type="radio" name="email_transport" value="microsoft365" data-transport-radio
+               {% if settings.email_transport == 'microsoft365' %}checked{% endif %}>
+        Microsoft 365 (Microsoft Graph)
+      </label>
+    </div>
+
+    <fieldset class="transport-block{% if settings.email_transport != 'microsoft365' %} is-active{% endif %}"
+              data-transport-block="smtp">
+      <legend>SMTP</legend>
+      <div class="form-grid">
+        <div class="form-field">
+          <label class="form-label" for="smtp_host">Serveur SMTP</label>
+          <input class="input" id="smtp_host" name="smtp_host" type="text" value="{{ settings.smtp_host }}">
+          <label class="form-label" for="smtp_port">Port</label>
+          <input class="input" id="smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ settings.smtp_port }}">
+          <label class="form-label" for="smtp_security">Sécurité</label>
+          <select class="select" id="smtp_security" name="smtp_security">
+            <option value="starttls" {% if settings.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
+            <option value="ssl" {% if settings.smtp_security == 'ssl' %}selected{% endif %}>TLS implicite</option>
+            <option value="none" {% if settings.smtp_security == 'none' %}selected{% endif %}>Sans chiffrement</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="smtp_username">Identifiant SMTP (optionnel)</label>
+          <input class="input" id="smtp_username" name="smtp_username" type="text" autocomplete="off" value="{{ settings.smtp_username }}">
+          <label class="form-label" for="smtp_password_new">Mot de passe SMTP</label>
+          <input class="input" id="smtp_password_new" name="smtp_password_new" type="password"
+                 autocomplete="new-password" placeholder="laisser vide pour conserver le secret actuel">
+          <p class="form-hint">
+            Secret : {{ secret_source_labels.get(secrets.smtp_source, secrets.smtp_source or 'non configuré') }}.
+            Un champ vide conserve le secret existant ; la valeur n'est jamais réaffichée.
+          </p>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="smtp_from">Expéditeur</label>
+          <input class="input" id="smtp_from" name="smtp_from" type="email" value="{{ settings.smtp_from }}">
+          <label class="form-label" for="smtp_display_name">Nom d'affichage (optionnel)</label>
+          <input class="input" id="smtp_display_name" name="smtp_display_name" type="text" value="{{ settings.smtp_display_name }}">
+          <label class="form-label" for="smtp_timeout">Délai (secondes, 5-60)</label>
+          <input class="input" id="smtp_timeout" name="smtp_timeout" type="number" min="5" max="60" value="{{ settings.smtp_timeout }}">
+        </div>
+      </div>
+      <p class="form-hint">
+        La validation des certificats TLS reste active (STARTTLS / TLS implicite). Pour un
+        relais à PKI interne, la CA de confiance doit être fournie à l'image — voir
+        docs/operations.md.
+      </p>
+    </fieldset>
+
+    <fieldset class="transport-block{% if settings.email_transport == 'microsoft365' %} is-active{% endif %}"
+              data-transport-block="microsoft365">
+      <legend>Microsoft 365</legend>
+      <div class="form-grid">
+        <div class="form-field">
+          <label class="form-label" for="m365_tenant_id">Tenant ID</label>
+          <input class="input" id="m365_tenant_id" name="m365_tenant_id" type="text" value="{{ settings.m365_tenant_id }}"
+                 placeholder="identifiant ou domaine onmicrosoft.com">
+          <label class="form-label" for="m365_client_id">Client ID</label>
+          <input class="input" id="m365_client_id" name="m365_client_id" type="text" value="{{ settings.m365_client_id }}"
+                 placeholder="GUID de l'application">
+          <label class="form-label" for="m365_client_secret_new">Client Secret</label>
+          <input class="input" id="m365_client_secret_new" name="m365_client_secret_new" type="password"
+                 autocomplete="new-password" placeholder="laisser vide pour conserver le secret actuel">
+          <p class="form-hint">
+            Secret : {{ secret_source_labels.get(secrets.m365_source, secrets.m365_source or 'non configuré') }}.
+            Un champ vide conserve le secret existant ; la valeur n'est jamais réaffichée.
+          </p>
+        </div>
+        <div class="form-field">
+          <label class="form-label" for="m365_mailbox">Boîte expéditrice (mailbox / From)</label>
+          <input class="input" id="m365_mailbox" name="m365_mailbox" type="text" value="{{ settings.m365_mailbox }}"
+                 placeholder="hub@example.com">
+          <label class="form-label" for="m365_display_name">Nom d'affichage</label>
+          <input class="input" id="m365_display_name" name="m365_display_name" type="text" value="{{ settings.m365_display_name }}">
+          <p class="form-hint">
+            Envoi via <span class="mono">POST /v1.0/users/{mailbox}/sendMail</span> (client
+            credentials, permission applicative Mail.Send). Chez les destinataires, l'adresse
+            affichée est celle de la boîte Exchange ; le nom d'affichage sert à l'identité du
+            message.
+          </p>
+        </div>
+      </div>
+    </fieldset>
+
     <div class="form-grid">
       <div class="form-field">
-        <label class="form-label" for="recipients">Destinataires (un par ligne)</label>
+        <label class="form-label" for="recipients">Destinataires (un par ligne, communs aux deux transports)</label>
         <textarea class="textarea" id="recipients" name="recipients" rows="3">{{ settings.recipients | join('\n') }}</textarea>
       </div>
-      <div class="form-field">
-        <label class="form-label" for="smtp_host">Serveur SMTP</label>
-        <input class="input" id="smtp_host" name="smtp_host" type="text" value="{{ settings.smtp_host }}">
-        <label class="form-label" for="smtp_port">Port</label>
-        <input class="input" id="smtp_port" name="smtp_port" type="number" min="1" max="65535" value="{{ settings.smtp_port }}">
-        <label class="form-label" for="smtp_security">Sécurité</label>
-        <select class="select" id="smtp_security" name="smtp_security">
-          <option value="starttls" {% if settings.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
-          <option value="ssl" {% if settings.smtp_security == 'ssl' %}selected{% endif %}>TLS implicite</option>
-          <option value="none" {% if settings.smtp_security == 'none' %}selected{% endif %}>Sans chiffrement</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <label class="form-label" for="smtp_username">Identifiant SMTP (optionnel)</label>
-        <input class="input" id="smtp_username" name="smtp_username" type="text" autocomplete="off" value="{{ settings.smtp_username }}">
-        <label class="form-label" for="smtp_from">Expéditeur</label>
-        <input class="input" id="smtp_from" name="smtp_from" type="email" value="{{ settings.smtp_from }}">
-        <label class="form-label" for="smtp_timeout">Délai (secondes)</label>
-        <input class="input" id="smtp_timeout" name="smtp_timeout" type="number" min="5" max="60" value="{{ settings.smtp_timeout }}">
-      </div>
     </div>
-    <p class="form-hint">
-      Mot de passe SMTP : {{ 'fourni au déploiement' if smtp_password_set else 'absent (HUB_SMTP_PASSWORD, requis si un identifiant est défini)' }} —
-      il n'est jamais stocké en base ni affiché ici.
-    </p>
+
     <div class="form-actions">
       <button class="button button-primary" type="submit">Enregistrer</button>
     </div>
   </form>
+
+  <div class="secret-actions">
+    <p class="form-label">Secrets enregistrés (suppression explicite uniquement)</p>
+    <div class="secret-row">
+      <span>Mot de passe SMTP : <strong>{{ secret_source_labels.get(secrets.smtp_source, secrets.smtp_source or 'non configuré') }}</strong></span>
+      {% if secrets.smtp_source == 'admin' %}
+      <form method="post" action="{{ url_for('security.email_secret_delete') }}"
+            data-confirm="Supprimer le mot de passe SMTP enregistré ?">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="name" value="{{ secret_names.smtp }}">
+        <input type="hidden" name="confirm_delete" value="1">
+        <button class="button" type="submit">Supprimer le secret</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="secret-row">
+      <span>Secret client Microsoft 365 : <strong>{{ secret_source_labels.get(secrets.m365_source, secrets.m365_source or 'non configuré') }}</strong></span>
+      {% if secrets.m365_source == 'admin' %}
+      <form method="post" action="{{ url_for('security.email_secret_delete') }}"
+            data-confirm="Supprimer le secret client Microsoft 365 enregistré ?">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="name" value="{{ secret_names.m365 }}">
+        <input type="hidden" name="confirm_delete" value="1">
+        <button class="button" type="submit">Supprimer le secret</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
   <form method="post" action="{{ url_for('security.test_email') }}">
     <input type="hidden" name="_csrf" value="{{ csrf }}">
     <div class="form-actions">
       <button class="button" type="submit">Test d'envoi</button>
-      <span class="cell-muted">utilise exactement la configuration enregistrée</span>
+      <span class="cell-muted">utilise exactement le transport et la configuration enregistrés</span>
     </div>
   </form>
 </section>
@@ -217,4 +331,6 @@
   <p class="cell-muted">Aucun événement enregistré.</p>
   {% endif %}
 </section>
+
+<script src="{{ url_for('static', filename='js/security-admin.js') }}" defer></script>
 {% endblock %}

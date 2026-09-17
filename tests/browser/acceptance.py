@@ -242,6 +242,13 @@ def main() -> int:
                     "la surveillance est désactivée par défaut",
                 )
                 check(
+                    "Sécurité : transport email configurable (V1.6.1)",
+                    "Transport email" in security_content
+                    and "Microsoft 365" in security_content
+                    and "Test d'envoi" in security_content
+                    and page.locator("input[name='email_transport'][value='smtp']").count() == 1,
+                )
+                check(
                     "Sécurité : lien présent dans la navigation admin",
                     page.locator("a[href='/admin/security']").count() >= 1,
                 )

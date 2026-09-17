@@ -51,11 +51,14 @@ services:
       HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
       # Secrets d'infrastructure de la surveillance Trivy (V1.6) : fournis par le
       # déploiement, jamais versionnés, jamais en base. Jeton GitHub en LECTURE
-      # SEULE (portée Actions) pour télécharger l'artefact `trivy-report`, et mot
-      # de passe SMTP pour les alertes email. Vides = surveillance/emails
-      # simplement indisponibles (jamais activables sans eux).
+      # SEULE (portée Actions) pour télécharger l'artefact `trivy-report`.
       HUB_GITHUB_TOKEN: "${HUB_GITHUB_TOKEN:-}"
+      # Secrets email (V1.6.1) : **bootstrap uniquement**. Le transport email et
+      # ses secrets se configurent dans l'administration (Sécurité → Alertes) ;
+      # ces variables ne servent que tant qu'aucun secret administré n'existe.
+      # Un secret enregistré dans la webapp est toujours prioritaire (voir D23).
       HUB_SMTP_PASSWORD: "${HUB_SMTP_PASSWORD:-}"
+      HUB_MICROSOFT_CLIENT_SECRET: "${HUB_MICROSOFT_CLIENT_SECRET:-}"
       # Hostname attendu dans le certificat TLS (affichage + validation helper) : à
       # définir côté installation ; vide = aucune attente particulière.
       HUB_TLS_HOSTNAME: "${HUB_TLS_HOSTNAME:-}"

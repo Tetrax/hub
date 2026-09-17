@@ -11,7 +11,7 @@ from . import auth, db
 from .config import DEFAULT_BRAND_LABEL, ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -36,9 +36,12 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         GIT_SHA=config["GIT_SHA"],
         PROJECT_URL=config["PROJECT_URL"],
         # Secrets d'infrastructure (surveillance Trivy, V1.6) : présents uniquement
-        # en mémoire ; jamais rendus, jamais journalisés.
+        # en mémoire ; jamais rendus, jamais journalisés. Les secrets email sont
+        # administrables depuis la V1.6.1 (fichiers dédiés) ; ces variables ne
+        # servent que de bootstrap tant qu'aucun secret administré n'existe.
         GITHUB_TOKEN=config["GITHUB_TOKEN"],
         SMTP_PASSWORD=config["SMTP_PASSWORD"],
+        MICROSOFT_CLIENT_SECRET=config["MICROSOFT_CLIENT_SECRET"],
         TRIVY_SCHEDULER_ENABLED=config["TRIVY_SCHEDULER_ENABLED"],
         HUB_VERSION=__version__,
         MAX_CONTENT_LENGTH=config["MAX_CONTENT_LENGTH"],

@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from app import db, trivy_email, trivy_github, trivy_monitor
+from app import db, graphmail, mailsecrets, trivy_email, trivy_github, trivy_monitor
 
 COMMIT_A = "a" * 40
 COMMIT_B = "b" * 40
@@ -77,7 +77,7 @@ def capture_emails(monkeypatch, *, ok: bool = True, detail: str = "Email envoyé
     return calls
 
 
-def enable(app, *, notifications: bool = True, token: str = "jeton-de-test", severities=("critical", "high"), **overrides):
+def enable(app, *, notifications: bool = True, token: str = "jeton-de-test", severities=("critical", "high"), m365_secret_present: bool = False, **overrides):
     app.config["GITHUB_TOKEN"] = token
     connection = db.connect(app.config["DB_PATH"])
     form = {
@@ -98,7 +98,10 @@ def enable(app, *, notifications: bool = True, token: str = "jeton-de-test", sev
     }
     form.update(overrides)
     values, errors = trivy_monitor.validate_settings(
-        form, github_token_present=bool(token), smtp_password_present=False
+        form,
+        github_token_present=bool(token),
+        smtp_password_present=False,
+        m365_secret_present=m365_secret_present,
     )
     assert not errors, errors
     trivy_monitor.save_settings(connection, values)
@@ -585,3 +588,106 @@ def test_freshness_and_next_sync(app, monkeypatch):
     stale = dict(state, scan_at="2026-09-01T00:00:00Z")
     assert trivy_monitor.freshness(stale) == "stale"
     assert trivy_monitor.next_sync_at(state) is not None
+
+
+# --- Transport email configurable (V1.6.1) -----------------------------------------
+
+
+def test_a_delta_email_can_use_the_microsoft365_transport(app, monkeypatch):
+    from test_graph_email import FakeOpener, FakeResponse, token_response
+
+    enable(
+        app,
+        email_transport="microsoft365",
+        m365_secret_present=True,
+        m365_tenant_id="contoso.onmicrosoft.com",
+        m365_client_id="11111111-2222-3333-4444-555555555555",
+        m365_mailbox="hub@example.com",
+        m365_display_name="SNS Hub",
+    )
+    mailsecrets.write_secret(
+        app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET, "secret-m365"
+    )
+    fake = FakeOpener(token_response(), FakeResponse(202, b""))
+    monkeypatch.setattr(graphmail, "_urlopen", fake)
+    use_github(monkeypatch, payload(BASELINE))
+    trivy_monitor.sync(app)  # baseline silencieuse
+    assert fake.requests == [], "aucun email pour la baseline"
+
+    second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
+    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
+               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    result = trivy_monitor.sync(app)
+    assert result.ok and result.notified == 1
+    sent = json.loads(fake.requests[-1].data.decode("utf-8"))
+    assert "CVE-2026-0004" in sent["message"]["body"]["content"]
+    assert state_of(app)["last_notification_status"] == "sent"
+
+
+def test_an_incomplete_transport_never_breaks_the_ingestion(app, monkeypatch):
+    enable(
+        app,
+        email_transport="microsoft365",
+        m365_secret_present=True,
+        m365_tenant_id="contoso.onmicrosoft.com",
+        m365_client_id="11111111-2222-3333-4444-555555555555",
+        m365_mailbox="hub@example.com",
+    )
+    # Le secret est supprimé après coup : notifications activées, transport incomplet.
+    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET)
+    use_github(monkeypatch, payload(BASELINE))
+    trivy_monitor.sync(app)
+
+    second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
+    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
+               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    result = trivy_monitor.sync(app)
+    assert result.ok, "l'ingestion n'échoue jamais à cause du transport"
+    assert "Transport email incomplet" in result.message
+    state = state_of(app)
+    assert state["last_notification_status"] == "failed"
+    assert "Transport email incomplet" in state["last_notification_error"]
+    # La baseline a bien avancé : la CVE connue n'est pas re-notifiée ensuite.
+    third = second + [_finding("CVE-2026-0005", "zlib", "high")]
+    use_github(monkeypatch, payload(third, created="2026-09-19T05:24:00Z"), run_id="1003",
+               commit="c" * 40, started="2026-09-19T05:23:00Z")
+    trivy_monitor.sync(app)
+    failed = [event["summary"] for event in events_of(app) if event["notification_status"] == "failed"]
+    # `recent_events` liste du plus récent au plus ancien : une seule entrée par
+    # CVE — la CVE déjà connue n'est jamais re-notifiée (baseline conservée).
+    assert failed == [
+        "Apparition — CVE-2026-0005 (zlib, HIGH)",
+        "Apparition — CVE-2026-0004 (libpcre2-8-0, HIGH)",
+    ]
+
+
+def test_a_v16_configuration_migrates_without_loss(app, monkeypatch):
+    """Une base V1.6 (aucune clé transport) reste exploitable, en SMTP par défaut."""
+    from test_trivy_email import FakeSmtp
+
+    server = FakeSmtp()
+    server.start()
+    try:
+        enable(app, smtp_host="127.0.0.1", smtp_port=str(server.port), smtp_security="none")
+        connection = db.connect(app.config["DB_PATH"])
+        connection.execute("DELETE FROM settings WHERE key = 'security.email_transport'")
+        connection.execute("DELETE FROM settings WHERE key LIKE 'security.m365%'")
+        connection.commit()
+        settings = trivy_monitor.load_settings(connection)
+        connection.close()
+        assert settings.email_transport == "smtp"
+        assert settings.recipients == ("sns@valdev.me",)
+        assert settings.m365_display_name == "SNS Hub"
+        assert settings.smtp_host == "127.0.0.1"
+
+        use_github(monkeypatch, payload(BASELINE))
+        trivy_monitor.sync(app)
+        second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
+        use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
+                   commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+        result = trivy_monitor.sync(app)
+        assert result.ok and result.notified == 1
+        assert len(server.messages) == 1
+        assert "CVE-2026-0004" in server.messages[0]
+    finally:
+        server.close()

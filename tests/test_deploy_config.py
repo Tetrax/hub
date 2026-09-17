@@ -306,12 +306,12 @@ def test_offline_image_scripts_are_trivial_and_present():
 
 
 def test_version_is_current(client):
-    """La version applicative est bumpée à chaque livraison (V1.6 : surveillance Trivy)."""
+    """La version applicative est bumpée à chaque livraison (V1.6.1 : transport email)."""
     from app import __version__
 
-    assert __version__ == "1.6.0"
+    assert __version__ == "1.6.1"
     body = client.get("/healthz").get_json()
-    assert body["version"] == "1.6.0"
+    assert body["version"] == "1.6.1"
 
 
 # --- Durcissement du conteneur applicatif (V1.4) ------------------------------
