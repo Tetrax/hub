@@ -9,6 +9,9 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
   {# Applique le thème mémorisé avant le premier rendu (évite tout flash). #}
   <script src="{{ url_for('static', filename='js/theme-init.js') }}"></script>
+  {# Applique la vue de catalogue mémorisée (cartes / liste) avant le premier
+     rendu : la bascule Cartes/Liste ne provoque aucun clignotement. #}
+  <script src="{{ url_for('static', filename='js/catalog-view-init.js') }}"></script>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/hub.css') }}">
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -18,7 +21,7 @@
       <a class="brand" href="{{ url_for('public.index') }}">
         <img class="brand-logo" src="{{ url_for('static', filename='img/logo-pink.png') }}"
              alt="SNS Security" width="82" height="40">
-        <span class="brand-name">Hub</span>
+        <span class="brand-name">{{ brand_label }}</span>
       </a>
       <nav class="header-nav" aria-label="Navigation">
         <button class="theme-toggle" type="button" data-theme-toggle

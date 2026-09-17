@@ -46,6 +46,9 @@ services:
       - "${HUB_BIND_IP:-127.0.0.1}:${HUB_PORT:-13744}:8000"
     environment:
       HUB_DATA_DIR: /data
+      # Libellé affiché à côté du logo SNS (purement visuel : aucun effet sur le
+      # hostname, le certificat, la base ou les sessions). Vide = « HUB ».
+      HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
       # Hostname attendu dans le certificat TLS (affichage + validation helper) : à
       # définir côté installation ; vide = aucune attente particulière.
       HUB_TLS_HOSTNAME: "${HUB_TLS_HOSTNAME:-}"

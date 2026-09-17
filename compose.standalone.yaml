@@ -42,6 +42,9 @@ services:
         ipv4_address: ${HUB_IPV4_ADDRESS:-}
     environment:
       HUB_DATA_DIR: /data
+      # Libellé du header, purement visuel (défaut : « HUB ») — à saisir dans les
+      # Environment variables Portainer pour personnaliser une instance.
+      HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"
       # Nom porté par le certificat : validé à l'import du PKCS#12/PEM.
       HUB_TLS_HOSTNAME: "${HUB_HOSTNAME:?HUB_HOSTNAME est requis (nom DNS du Hub)}"
       # TLS direct : gunicorn sert HTTPS sur le port interne, l'activation d'un

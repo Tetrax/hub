@@ -1,4 +1,5 @@
-/* SNS Hub — améliorations progressives : filtres instantanés, confirmations,
+/* SNS Hub — améliorations progressives : filtres instantanés, bascule de la vue
+   catalogue (cartes / liste, mémorisée en localStorage), confirmations,
    bascule de thème (mémorisée en localStorage), création rapide de catégorie.
    Sans JavaScript, le portail et l'administration restent fonctionnels. */
 (function () {
@@ -66,10 +67,35 @@
     }
   }
 
+  /* --- Vue du catalogue : cartes / liste ------------------------------------ */
+
+  var VIEW_KEY = "hub_catalog_view";
+  var viewSwitch = document.querySelector("[data-view-switch]");
+  var viewButtons = Array.prototype.slice.call(document.querySelectorAll("[data-view-button]"));
+
+  function currentView() {
+    return document.documentElement.getAttribute("data-catalog-view") === "list" ? "list" : "cards";
+  }
+
+  function panelItems(view) {
+    var panel = document.querySelector('[data-view-panel="' + view + '"]');
+    return panel ? Array.prototype.slice.call(panel.querySelectorAll("[data-app]")) : [];
+  }
+
+  function syncViewButtons() {
+    var view = currentView();
+    viewButtons.forEach(function (button) {
+      button.setAttribute(
+        "aria-pressed",
+        button.getAttribute("data-view-button") === view ? "true" : "false"
+      );
+    });
+  }
+
   /* --- Filtres de la landing page ------------------------------------------ */
 
   var searchInput = document.querySelector('[data-filter="search"]');
-  var cards = Array.prototype.slice.call(document.querySelectorAll("[data-card]"));
+  var items = Array.prototype.slice.call(document.querySelectorAll("[data-app]"));
   var chips = Array.prototype.slice.call(document.querySelectorAll("[data-category-chip]"));
   var emptyState = document.querySelector("[data-empty-state]");
   var counter = document.querySelector("[data-result-count]");
@@ -83,19 +109,21 @@
     return (value || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   }
 
+  /* Le moteur de filtre est unique : il marque les deux rendus (carte et ligne)
+     du même catalogue ; seul le décompte suit la vue affichée. */
   function applyFilters() {
     var query = normalize(searchInput ? searchInput.value : "");
-    var visible = 0;
-    cards.forEach(function (card) {
+    items.forEach(function (item) {
       var haystack = normalize(
-        card.getAttribute("data-name") + " " + card.getAttribute("data-description")
+        item.getAttribute("data-name") + " " + item.getAttribute("data-description")
       );
-      var categoryOk = !activeCategory || card.getAttribute("data-category") === activeCategory;
+      var categoryOk = !activeCategory || item.getAttribute("data-category") === activeCategory;
       var queryOk = !query || haystack.indexOf(query) !== -1;
-      var show = categoryOk && queryOk;
-      card.hidden = !show;
-      if (show) { visible += 1; }
+      item.hidden = !(categoryOk && queryOk);
     });
+    var visible = panelItems(currentView()).filter(function (item) {
+      return !item.hidden;
+    }).length;
     if (emptyState) { emptyState.hidden = visible !== 0; }
     if (counter) {
       counter.textContent =
@@ -103,13 +131,41 @@
     }
   }
 
-  if (searchInput && cards.length) {
+  function setView(view, persist) {
+    var root = document.documentElement;
+    root.setAttribute("data-catalog-view", view === "list" ? "list" : "cards");
+    if (persist) {
+      try {
+        window.localStorage.setItem(VIEW_KEY, view);
+      } catch (error) {
+        /* stockage indisponible : la bascule reste active pour la session */
+      }
+    }
+    /* Transition légère : la classe est retirée aussitôt l'animation finie ;
+       `prefers-reduced-motion` neutralise toute animation (voir hub.css). */
+    root.classList.add("view-animate");
+    window.setTimeout(function () { root.classList.remove("view-animate"); }, 260);
+    syncViewButtons();
+    applyFilters();
+  }
+
+  if (viewSwitch && viewButtons.length && items.length) {
+    viewSwitch.hidden = false;
+    syncViewButtons();
+    viewButtons.forEach(function (button) {
+      button.addEventListener("click", function () {
+        setView(button.getAttribute("data-view-button") === "list" ? "list" : "cards", true);
+      });
+    });
+  }
+
+  if (searchInput && items.length) {
     searchInput.addEventListener("input", applyFilters);
   }
 
   chips.forEach(function (chip) {
     chip.addEventListener("click", function (event) {
-      if (!cards.length) { return; }
+      if (!items.length) { return; }
       event.preventDefault();
       chips.forEach(function (other) {
         other.classList.remove("chip-active");

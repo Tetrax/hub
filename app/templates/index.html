@@ -29,13 +29,22 @@
   </form>
 </div>
 
-<p class="result-count" data-result-count role="status" aria-live="polite">
-  {{ apps|length }} application{{ 's' if apps|length != 1 else '' }} affichée{{ 's' if apps|length != 1 else '' }}
-</p>
+<div class="results-bar">
+  <p class="result-count" data-result-count role="status" aria-live="polite">
+    {{ apps|length }} application{{ 's' if apps|length != 1 else '' }} affichée{{ 's' if apps|length != 1 else '' }}
+  </p>
+  {# Bascule d'affichage : amélioration progressive — le portail reste en vue
+     Cartes par défaut tant que JavaScript n'est pas actif. #}
+  <div class="view-switch" data-view-switch role="group"
+       aria-label="Affichage du catalogue" hidden>
+    <button class="view-btn" type="button" data-view-button="cards" aria-pressed="true">Cartes</button>
+    <button class="view-btn" type="button" data-view-button="list" aria-pressed="false">Liste</button>
+  </div>
+</div>
 
-<section class="grid" aria-label="Applications SNS">
+<section class="grid" data-view-panel="cards" aria-label="Applications SNS">
   {% for app in apps %}
-  <article class="card" data-card
+  <article class="card" data-card data-app
            data-name="{{ app['name']|lower }}" data-description="{{ app['description']|lower }}"
            data-category="{{ app['category_slug'] or '' }}">
     <a class="card-link" href="{{ app['url'] }}"
@@ -59,6 +68,26 @@
     </a>
   </article>
   {% endfor %}
+</section>
+
+<section class="catalog-list" data-view-panel="list" aria-label="Applications SNS — vue liste">
+  <ul class="rows">
+    {% for app in apps %}
+    <li class="row" data-app
+        data-name="{{ app['name']|lower }}" data-description="{{ app['description']|lower }}"
+        data-category="{{ app['category_slug'] or '' }}">
+      <a class="row-link" href="{{ app['url'] }}"
+         {% if open_new_tab %}target="_blank" rel="noopener noreferrer"{% endif %}
+         aria-label="Ouvrir {{ app['name'] }}{% if open_new_tab %} (nouvel onglet){% endif %}">
+        <span class="row-title">{{ app['name'] }}</span>
+        <span class="row-category">{{ app['category_name'] or 'Autres' }}</span>
+        <span class="badge badge-{{ app['status'] }}">{{ statuses[app['status']] }}</span>
+        <span class="row-desc">{{ app['description'] }}</span>
+        <span class="row-cta">Ouvrir l'application <span aria-hidden="true">→</span></span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
 </section>
 
 <div class="empty" data-empty-state {% if apps %}hidden{% endif %}>

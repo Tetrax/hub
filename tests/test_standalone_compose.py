@@ -247,6 +247,28 @@ def test_empty_network_variables_never_break_the_standard_case():
     )
 
 
+# --- Branding (optionnel, purement visuel) ------------------------------------
+
+
+def test_brand_label_passthrough_is_optional_and_neutral():
+    """Le libellé du header est optionnel : vide par défaut, jamais figé dans le dépôt."""
+    assert 'HUB_BRAND_LABEL: "${HUB_BRAND_LABEL:-}"' in read(STANDALONE)
+    for value in ("mco-hub", "subnet-docker", "8448"):
+        assert value not in read(STANDALONE).lower()
+
+
+@requires_compose
+def test_brand_label_reaches_the_container_only_when_configured():
+    environment = render()["services"]["web"]["environment"]
+    assert environment["HUB_BRAND_LABEL"] == ""
+    configured = render(extra_env={"HUB_BRAND_LABEL": "PORTAIL INTERNE"})["services"]["web"][
+        "environment"
+    ]
+    assert configured["HUB_BRAND_LABEL"] == "PORTAIL INTERNE"
+    # Aucune conséquence sur la configuration TLS.
+    assert configured["HUB_TLS_HOSTNAME"] == environment["HUB_TLS_HOSTNAME"] == HOSTNAME
+
+
 def test_network_variables_are_documented():
     for relative in (".env.example", "docs/operations.md", "README.md"):
         text = read(relative)
@@ -273,7 +295,7 @@ def test_common_settings_do_not_drift_from_base_compose():
 
     base_env = base["environment"]
     standalone_env = standalone["environment"]
-    for key in ("HUB_DATA_DIR", "HUB_SESSION_TTL_SECONDS", "HUB_GIT_SHA"):
+    for key in ("HUB_DATA_DIR", "HUB_SESSION_TTL_SECONDS", "HUB_GIT_SHA", "HUB_BRAND_LABEL"):
         assert standalone_env[key] == base_env[key], f"divergence sur {key}"
 
 

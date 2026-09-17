@@ -15,6 +15,11 @@ DEFAULT_DATA_DIR = Path("runtime/data")
 DEFAULT_CERT_SOCKET = "/run/hub-cert-helper/helper.sock"
 DEFAULT_CERTS_DIR = "/certs"
 
+# Libellé de marque affiché dans le header, à côté du logo SNS. Purement visuel :
+# aucune conséquence sur le hostname, le certificat, la base ou les sessions.
+DEFAULT_BRAND_LABEL = "HUB"
+BRAND_LABEL_MAX = 40
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name, "").strip()
@@ -24,6 +29,18 @@ def _env_int(name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         return default
+
+
+def _brand_label(raw: str) -> str:
+    """Libellé du header : texte simple (trim, espaces normalisés, sans caractère
+    de contrôle), borné en longueur ; jamais de HTML — le gabarit échappe la
+    valeur à l'affichage. Une valeur vide ou inexploitable retombe sur le
+    libellé générique."""
+    value = " ".join((raw or "").split())
+    value = "".join(character for character in value if character.isprintable())
+    if not value:
+        return DEFAULT_BRAND_LABEL
+    return value[:BRAND_LABEL_MAX].rstrip() or DEFAULT_BRAND_LABEL
 
 
 def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> dict:
@@ -46,6 +63,7 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         "TLS_KEY_FILE": os.environ.get("HUB_TLS_KEY", "").strip(),
         "TLS_BIND_PORT": _env_int("HUB_TLS_BIND_PORT", 8443),
         "GUNICORN_PIDFILE": os.environ.get("HUB_GUNICORN_PIDFILE", "/tmp/gunicorn.pid"),
+        "BRAND_LABEL": _brand_label(os.environ.get("HUB_BRAND_LABEL", "")),
         "TRUSTED_PROXY_CIDRS": os.environ.get("HUB_TRUSTED_PROXY_CIDRS", ""),
         "SESSION_TTL_SECONDS": _env_int("HUB_SESSION_TTL_SECONDS", 12 * 3600),
         "GIT_SHA": os.environ.get("HUB_GIT_SHA", "").strip()[:40] or None,

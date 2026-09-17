@@ -75,6 +75,7 @@ def test_generic_compose_is_variable_driven():
         "HUB_TLS_HOSTNAME",
         "HUB_CERT_HELPER_SOCKET",
         "HUB_CERT_HELPER_DIR",
+        "HUB_BRAND_LABEL",
         "HUB_CONTAINER_NAME",
         "HUB_IMAGE_TAG",
     ):
@@ -168,6 +169,7 @@ def test_env_example_documents_installation_variables():
         "HUB_BACKUP_DIR",
         "HUB_DATA_PATH",
         "HUB_CERT_HELPER_SOCKET",
+        "HUB_BRAND_LABEL",
         "COMPOSE_FILE",
     ):
         assert re.search(rf"^#?{variable}=", content, re.MULTILINE), f"{variable} absent"
@@ -299,12 +301,12 @@ def test_offline_image_scripts_are_trivial_and_present():
 
 
 def test_version_is_current(client):
-    """La version applicative est bumpée à chaque livraison (V1.4.1 : réseau externe optionnel)."""
+    """La version applicative est bumpée à chaque livraison (V1.5 : branding configurable, vue Liste)."""
     from app import __version__
 
-    assert __version__ == "1.4.1"
+    assert __version__ == "1.5.0"
     body = client.get("/healthz").get_json()
-    assert body["version"] == "1.4.1"
+    assert body["version"] == "1.5.0"
 
 
 # --- Durcissement du conteneur applicatif (V1.4) ------------------------------

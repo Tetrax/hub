@@ -8,10 +8,10 @@ from __future__ import annotations
 from flask import Flask, jsonify, render_template, request
 
 from . import auth, db
-from .config import ensure_data_dirs, ensure_secret_key, load_config
+from .config import DEFAULT_BRAND_LABEL, ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:
@@ -32,6 +32,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
         TLS_BIND_PORT=config["TLS_BIND_PORT"],
         GUNICORN_PIDFILE=config["GUNICORN_PIDFILE"],
         SESSION_TTL_SECONDS=config["SESSION_TTL_SECONDS"],
+        BRAND_LABEL=config["BRAND_LABEL"],
         GIT_SHA=config["GIT_SHA"],
         PROJECT_URL=config["PROJECT_URL"],
         HUB_VERSION=__version__,
@@ -83,6 +84,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
             "hub_git_sha": app.config.get("GIT_SHA"),
             "project_url": app.config.get("PROJECT_URL"),
             "tls_hostname": app.config.get("TLS_HOSTNAME") or None,
+            "brand_label": app.config.get("BRAND_LABEL") or DEFAULT_BRAND_LABEL,
             "statuses": STATUS_LABELS,
         }
 
