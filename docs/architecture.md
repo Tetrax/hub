@@ -100,6 +100,16 @@ structure (vérifié par comparaison des rendus `docker compose config`).
   Le parcours certificat passe par **`certbackend.py`** : `certclient.py` (helper
   du VPS), `certlocal.py` (TLS direct du standalone) ou aucun backend — les vues
   ne connaissent que ces trois fonctions.
+- **Surveillance Trivy (V1.6)** : `trivy.py` (validation stricte du rapport et
+  identité `CVE + paquet`), `trivy_github.py` (API GitHub en lecture seule :
+  dernier run réussi, artefact `trivy-report`, ZIP borné — jeton
+  `HUB_GITHUB_TOKEN`, jamais renvoyé ni journalisé), `trivy_monitor.py`
+  (configuration fonctionnelle, état, baseline, delta, publication atomique,
+  verrou `flock`), `trivy_email.py` (composition SNS + envoi SMTP, un seul email
+  par synchronisation), `trivy_scheduler.py` (thread d'arrière-plan, aucune
+  planification externe) et `views_security.py` (section `/admin/security`).
+  Le Hub **consomme**, il ne scanne jamais : aucun accès Docker, aucun
+  `docker.sock`, aucune inspection de conteneur.
 
 ### 2. Modèle de données
 
@@ -109,6 +119,13 @@ apps(id, slug UNIQUE NOCASE, name, description, url, image,
      category_id → categories(id) NOT NULL, position, enabled, status,
      created_at, updated_at)
 settings(key, value) · admin_users · sessions · login_attempts · cert_validations
+security_state(id=1, image, commit_sha, run_id, run_url, run_started_at, scan_at,
+               fetched_at, report_sha256, findings_json, critical_count, high_count,
+               last_attempt_at, last_sync_at, last_sync_status, last_sync_error,
+               last_manual_sync_at, last_notification_at,
+               last_notification_status, last_notification_error)
+security_events(id, created_at, kind, severity, summary, detail_json, commit_sha,
+                run_id, notification_status, notification_error, notified_at)
 ```
 
 - Une application appartient à **une** catégorie (clé étrangère, `NOT NULL`) ;
@@ -118,6 +135,9 @@ settings(key, value) · admin_users · sessions · login_attempts · cert_valida
 - Schéma versionné par `PRAGMA user_version` ; migration 1 → 2 transactionnelle
   et idempotente, déclenchée par `db.init_db()` au démarrage : aucune
   application, association, position, image ou visibilité n'est perdue.
+- `security_state` (ligne unique) porte le dernier rapport publié et sa
+  provenance ; `security_events` l'historique minimal et le statut de
+  notification (V1.6, tables additives — schéma v3).
 
 ### 3. Certificats : `hub_certctl` + trois backends
 

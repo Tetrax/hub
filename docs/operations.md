@@ -648,3 +648,84 @@ gh workflow run ci.yml            # puis : gh run list --workflow=ci.yml
   comme « aucune vulnérabilité ».
 - **Bon à savoir** : GitHub désactive les workflows planifiés après 60 jours
   sans activité du dépôt — un push (ou un run manuel) suffit à les réactiver.
+
+## 16. Surveillance de l'image (Trivy) — CI → Hub → alertes
+
+Le scan reste **dans GitHub Actions** (§15) ; le Hub **consomme** l'artefact
+`trivy-report` du dernier run réussi (`Tetrax/hub`, workflow `ci.yml`, branche
+`main`) et n'envoie un email **que lorsqu'un changement pertinent est détecté**.
+La fonction est **désactivée par défaut** et se configure dans
+`/admin/security` (voir D22).
+
+### 16.1 Ce que fait le Hub (par synchronisation)
+
+1. Télécharge l'artefact (jeton GitHub en lecture seule), valide **strictement**
+   le rapport (refus en entier si invalide), vérifie le SHA-256 et la fraîcheur
+   (un rapport plus ancien que l'état courant est refusé).
+2. Publie le nouvel état (SQLite) : compteurs, findings, provenance (commit, run,
+   URL, horodatages).
+3. Calcule le delta : apparitions, disparitions, changements de sévérité — un
+   changement de version installée/corrigée ou de titre est un rafraîchissement
+   silencieux.
+4. Envoie **au plus un email** si un événement notifiable existe (filtres par
+   sévérité et par type). Un échec SMTP ne modifie pas la baseline : l'événement
+   est marqué en échec et peut être renvoyé depuis l'admin.
+
+### 16.2 Activer
+
+1. **Jeton GitHub** (déploiement) : fine-grained PAT sur `Tetrax/hub`, portée
+   **`Actions: Read`** uniquement (aucun droit d'écriture ; `Contents: Read` n'est
+   pas nécessaire). Vérifié le 2026-09-17 : l'artefact exige une authentification
+   même sur un dépôt public.
+   - VPS : `HUB_GITHUB_TOKEN` dans `.env` puis redéploiement/recréation.
+   - Portainer : `HUB_GITHUB_TOKEN` dans les *Environment variables* de la stack.
+2. **SMTP** (si les emails sont voulus) : renseigner serveur, port, sécurité
+   (STARTTLS/TLS/sans chiffrement), identifiant éventuel, expéditeur et
+   destinataires dans l'admin, et fournir `HUB_SMTP_PASSWORD` au déploiement
+   (requis si un identifiant est défini).
+3. Dans `/admin/security` : cocher **Activer la surveillance**, puis (optionnel)
+   **Activer les notifications email**, choisir les sévérités suivies et les types
+   d'événements, **Enregistrer**. L'activation est refusée avec un message clair
+   si un prérequis manque (jeton absent, SMTP incomplet).
+4. Premier passage : la **baseline est initialisée silencieusement** (aucun email) ;
+   elle est affichée dans l'historique.
+
+La synchronisation automatique tourne ensuite **une fois par heure au plus** (le
+scan CI est quotidien) ; « Synchroniser maintenant » est limité à une action par
+minute. Le standalone fonctionne sans second conteneur ni modification
+d'architecture.
+
+### 16.3 Lire l'état
+
+- **Dashboard** `/admin/security` : compteurs CRITICAL/HIGH, dernier scan
+  (avec `À jour` / `Rapport ancien` au-delà de 48 h), commit, run GitHub, image,
+  dernière synchronisation, prochaine synchronisation, état des notifications,
+  erreur éventuelle, historique récent (20 événements) et configuration.
+- **Vulnérabilités** `/admin/security/vulnerabilities` : table triée
+  (CRITICAL d'abord) — sévérité, CVE (lien avis si le rapport fournit une URL
+  `https` validée), paquet, versions installée et corrigée, titre.
+
+### 16.4 Pannes
+
+| Situation | Comportement |
+|---|---|
+| GitHub inaccessible / jeton expiré / quota | Dernier état conservé, vieillit (`Rapport ancien` > 48 h), aucune fausse résolution ; l'erreur est visible sur le dashboard. |
+| Artefact absent ou expiré | Idem : état conservé, message explicite (attendre le prochain scan ou relancer le workflow CI). |
+| Rapport invalide | Refusé en entier, état conservé, message précis (jamais de « 0 vulnérabilité »). |
+| Échec d'envoi email | Baseline mise à jour quand même ; l'événement est marqué « échec d'envoi », bouton **Réessayer l'envoi du dernier lot**. |
+| Surveillance désactivée | Aucune synchronisation, aucun email, aucun avertissement permanent. |
+
+### 16.5 Exploitation
+
+- **Désactiver** : décocher la surveillance (ou les emails) et enregistrer —
+  l'état existant est conservé et l'interface le précise.
+- **Réinitialiser la baseline** (nouveau départ volontaire) :
+  `docker compose exec web python -m app.manage` n'est pas nécessaire :
+  `docker exec hub-web python -c "import sqlite3,os;c=sqlite3.connect(os.environ.get('HUB_DATA_DIR','/data')+'/hub.sqlite');c.execute('DELETE FROM security_state');c.execute('DELETE FROM security_events');c.commit()"`
+  — la prochaine synchronisation réinitialise la baseline en silence.
+- **Sauvegarde/restauration** : l'état et la configuration vivent dans
+  `hub.sqlite`, donc le backup existant (`sudo ./scripts/backup.sh`) les couvre
+  automatiquement ; aucune procédure supplémentaire.
+- **Planification** : interne à l'application (thread + verrou inter-process),
+  désactivable par `HUB_TRIVY_SCHEDULER=0` (voir §3) ; aucun timer systemd, aucun
+  service supplémentaire en standalone.

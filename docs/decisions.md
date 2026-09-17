@@ -624,3 +624,84 @@ aucune mise à jour « sûre et minimale » de l'image n'est donc disponible
 aujourd'hui, le finding est documenté et sera résolu par un rafraîchissement du
 digest quand Debian publiera les correctifs dans l'image officielle. Aucun impact
 produit : version applicative inchangée, production non redéployée.
+
+## D22 — Surveillance Trivy : Hub consomme la CI, il ne scanne jamais (V1.6)
+
+**Contexte.** Le scan vit dans GitHub Actions (D21) et produit l'artefact
+`trivy-report`. Personne ne lit ce rapport au quotidien : un changement (nouvelle
+vulnérabilité, aggravation, disparition) doit être visible dans le Hub et signalé
+par email **uniquement lorsqu'il se produit**. FortiUpgrade possède un dispositif
+équivalent, mais dimensionné pour son moteur de notifications générique (outbox,
+checkpoints, Microsoft 365) — le Hub n'en a pas besoin.
+
+**Décision.**
+
+- **Hub est un consumer** : il télécharge l'artefact du dernier run réussi
+  (`Tetrax/hub`, workflow CI, branche `main`) — jamais de scan, jamais de Docker,
+  jamais de `docker.sock`. Le téléchargement d'artefact exige un jeton même pour
+  un dépôt public (vérifié le 2026-09-17 : liste publique, ZIP en 401) →
+  `HUB_GITHUB_TOKEN` en **lecture seule** (fine-grained, portée `Actions: Read`),
+  fourni par le déploiement, jamais en base, jamais rendu, jamais journalisé,
+  envoyé uniquement vers `api.github.com` (retiré sur redirection inter-hôtes).
+- **Validation stricte avant toute influence** : taille bornée, JSON, schéma,
+  `ArtifactType = container_image`, contrat HIGH/CRITICAL corrigibles,
+  identifiants bornés et filtrés, URLs `https` validées, nombre de findings borné ;
+  un rapport invalide est refusé **en entier** — jamais d'ingestion partielle.
+- **Identité d'un finding** : `CVE + paquet`, **sans** la version installée — une
+  image reconstruite ne doit pas faire réapparaître les mêmes CVE comme nouvelles.
+- **Publication atomique** : un échec de téléchargement, de validation ou de
+  parse conserve intégralement le dernier état valide, qui vieillit visiblement
+  (seuil 48 h, scan quotidien) ; jamais de fausse « résolution » quand GitHub est
+  simplement indisponible. Un run ou un scan **plus ancien** que l'état courant est
+  refusé : les SHA Git ne sont pas chronologiquement comparables, ce sont les
+  horodatages du run et du scan qui tranchent.
+- **Baseline silencieuse** : la première ingestion initialise l'état sans
+  événement ni email (les findings déjà présents ne sont pas une alerte) ; l'admin
+  affiche « Baseline initialisée — N CRITICAL / M HIGH ».
+- **Delta** : apparition, disparition (« vulnérabilité non détectée dans la
+  nouvelle image », jamais « corrigée » sans preuve) et changement de sévérité
+  (aggravation ou atténuation). Un changement de version installée, de version
+  corrigée ou de titre est un **rafraîchissement de contenu** : l'état est mis à
+  jour, aucun événement, aucun email.
+- **Un email au maximum par synchronisation**, et seulement si un événement
+  notifiable existe : filtres par sévérité suivie et par type d'événement ; aucun
+  email sans changement. Un échec SMTP **ne revient pas sur la baseline**
+  (l'événement est marqué en échec, visible dans l'admin, renvoyable) — sinon la
+  même CVE serait « nouvelle » à chaque synchronisation.
+- **Planification sans second service** : un thread d'arrière-plan par worker
+  gunicorn, un **verrou fichier inter-process** (`flock`) garantit qu'une seule
+  synchronisation s'exécute à la fois ; cadence horaire (le scan CI est quotidien) ;
+  robuste au redémarrage et au rechargement `SIGHUP` (certificat) ; le standalone
+  reste **un seul conteneur** (aucun service `scheduler`, aucun
+  Celery/Redis/RabbitMQ).
+- **État dans la persistance existante** : `security_state` (ligne unique : dernier
+  rapport, provenance, compteurs, erreurs) et `security_events` (historique
+  minimal, statut de notification) dans `hub.sqlite` (schéma v3, tables
+  additives) ; la configuration fonctionnelle vit dans la table `settings`.
+- **Transport email : SMTP standard uniquement** (implicite TLS, STARTTLS ou sans
+  chiffrement explicitement autorisé) — la primitive éprouvée de FortiUpgrade
+  (smtplib, erreurs propres par étape, mot de passe jamais journalisé). Microsoft
+  365 / Graph est documenté comme **évolution ultérieure** : l'intégrer
+  doublerait le chantier email pour un besoin non démontré côté Hub. Le mot de
+  passe vient de `HUB_SMTP_PASSWORD` (déploiement) ; il n'est ni stocké en base ni
+  rendu au navigateur (l'interface n'affiche que « fourni / absent »).
+- **Désactivation** : configuration fonctionnelle dans l'admin (une seule source
+  de vérité), activable seulement si les credentials nécessaires sont fournis
+  (jeton GitHub pour la synchronisation ; configuration SMTP complète pour les
+  emails) ; surveillance et emails sont **deux commutateurs indépendants** ;
+  **désactivée par défaut** — aucune instance n'est activée automatiquement.
+
+**Alternatives.** Timer systemd hôte + `gh` (modèle FortiUpgrade) : rejeté — ne
+fonctionne pas en standalone (ni hôte ni `gh`) et le bouton « Synchroniser
+maintenant » exige que l'application elle-même sache télécharger. Second conteneur
+`scheduler` : rejeté (D16, un conteneur). Celery/Redis : rejeté (dépendances sans
+besoin). Jeton stocké en base : rejeté — secret d'infrastructure, il appartient au
+déploiement. Ingestion d'un fichier déposé sur un volume par un script externe :
+rejeté — le chemin actuel (artefact GitHub, un seul contrat CI→Hub) est celui
+validé en D21. Microsoft Graph : reporté (voir ci-dessus).
+
+**Conséquences.** La fonction est désactivée par défaut : le VPS et les instances
+existantes gardent leur comportement actuel tant qu'un jeton n'est pas fourni et
+la surveillance activée. Rien n'est publié hors de `/admin/security`. Le backup
+existant couvre l'état et la configuration (même base). Réinitialiser une baseline
+= supprimer la ligne `security_state` (procédure en `docs/operations.md` §16).

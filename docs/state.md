@@ -1,9 +1,10 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.5.0 livrée — branding du header configurable (`HUB_BRAND_LABEL`),
-vue Liste du catalogue (Cartes par défaut) et contrôle de sécurité Trivy actif
-dans la CI (informatif) ; aucune action ouverte**.
+Statut : **V1.6.0 livrée — surveillance Trivy (ingestion de l'artefact CI,
+baseline/delta, section `/admin/security`, alertes email sur changement), en plus
+du branding configurable, de la vue Liste et du contrôle Trivy en CI ; aucune
+action ouverte**.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -12,6 +13,17 @@ dans la CI (informatif) ; aucune action ouverte**.
 
 ## Version et périmètre
 
+- **V1.6 (2026-09-17)** : **surveillance de l'image par le Hub** — il **consomme**
+  l'artefact `trivy-report` de la CI (jamais de scan côté Hub, aucun accès
+  Docker), valide strictement le rapport, publie un état (baseline silencieuse,
+  puis delta : apparitions, disparitions, changements de sévérité), l'affiche dans
+  `/admin/security` (état + vulnérabilités actionnables) et n'envoie **qu'un seul
+  email — uniquement en cas de changement** (SMTP ; filtres par sévérité/type ;
+  renvoi possible après échec). Planification interne (thread + verrou
+  inter-process, horaire au plus ; aucun service supplémentaire, standalone
+  inchangé). **Désactivée par défaut** ; activable seulement avec
+  `HUB_GITHUB_TOKEN` (lecture seule, portée `Actions: Read`) et, pour les emails,
+  `HUB_SMTP_PASSWORD` — jamais en base ni rendus (voir D22, exploitation §16).
 - **CI (2026-09-17)** : **GitHub Actions** — `.github/workflows/ci.yml` : job
   `tests` (suite pytest complète, bloquant) puis job `security-scan` (**Trivy
   informatif** sur l'image réellement produite : paquets OS + bibliothèques
@@ -97,10 +109,20 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   `libpcre2-8-0`, `libsqlite3-0`) — **0 côté Python** ; la base du jour porte
   encore ces versions, le finding sera résolu par un rafraîchissement du digest
   `python:3.12-slim` quand Debian publiera les correctifs.
+- **Surveillance de l'image (V1.6, D22)** : le Hub **consomme** l'artefact
+  `trivy-report` (aucun scan côté Hub) et affiche l'état dans
+  `/admin/security` — baseline silencieuse à la première ingestion, puis delta
+  (apparitions, disparitions, changements de sévérité) ; **un seul email par
+  synchronisation, uniquement en cas de changement** ; synchronisation interne
+  horaire (thread + verrou inter-process, standalone inchangé) ; **désactivée par
+  défaut** (nécessite `HUB_GITHUB_TOKEN` en lecture seule et, pour les emails,
+  `HUB_SMTP_PASSWORD`). État au 2026-09-17 : validée en réel sur le run CI
+  `35253281173` (baseline 3 CRITICAL / 10 HIGH, idempotence vérifiée).
 - **Administration** : compte unique créé au premier accès (`/admin/setup`),
   sessions serveur, CSRF, verrouillage après échecs.
-- **Migration de base** : schéma en `user_version = 2` (migration V1.1 appliquée
-  en production le 2026-09-16, sauvegarde préalable conservée).
+- **Migration de base** : schéma en `user_version = 3` (migration V1.1 appliquée
+  en production le 2026-09-16, sauvegarde préalable conservée ; V1.6 ajoute les
+  tables `security_state`/`security_events`, additives).
 
 ### Certificat TLS en production (V1.2)
 

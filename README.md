@@ -125,6 +125,30 @@ n'est nécessaire, et Trivy n'est **jamais** installé dans l'image, le runtime,
 sur le VPS ou dans Portainer. Scanner manuellement : *Actions → CI → Run
 workflow*, ou `gh workflow run ci.yml`.
 
+## Surveillance de l'image (Trivy)
+
+Le Hub **consomme** l'artefact `trivy-report` produit par la CI (ci-dessus) : il
+ne scanne rien, n'inspecte pas Docker et ne lance aucun Trivy. Depuis
+`/admin/security` (strictement administrateur) :
+
+- **état de l'image** : compteurs CRITICAL/HIGH, dernier scan (signalé « rapport
+  ancien » au-delà de 48 h), commit, run GitHub, image ;
+- **vulnérabilités actionnables** (HIGH/CRITICAL corrigibles) avec versions
+  installée/corrigée et lien d'avis si le rapport en fournit un ;
+- **baseline silencieuse** à la première ingestion, puis **delta** : apparitions,
+  disparitions (« vulnérabilité non détectée dans la nouvelle image »),
+  changements de sévérité ;
+- **un email au maximum par synchronisation**, uniquement en cas de changement
+  (jamais de mail quotidien), désactivable indépendamment de la surveillance.
+
+La synchronisation est **interne** (une fois par heure au plus, verrou
+inter-process ; aucun service ni conteneur supplémentaire, y compris en
+standalone) et **désactivée par défaut**. Pour l'activer : `HUB_GITHUB_TOKEN`
+en lecture seule (portée `Actions: Read`) — obligatoire, le téléchargement
+d'artefact l'exige même pour un dépôt public — et, pour les emails,
+`HUB_SMTP_PASSWORD` côté déploiement ; le reste se règle dans l'admin
+(`/admin/security`). Détails : `docs/operations.md` §16, décision D22.
+
 ## Déploiement
 
 ```bash
