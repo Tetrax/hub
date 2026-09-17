@@ -76,7 +76,10 @@ structure (vérifié par comparaison des rendus `docker compose config`).
 ### 1. Application (`app/`)
 
 - **Flask 3.1** en rendu serveur (Jinja2), sans framework frontend ; CSS et JS
-  faits main (un seul fichier CSS, un seul fichier JS de progressive enhancement).
+  faits main (un seul fichier CSS, un seul fichier JS de progressive
+  enhancement, complété par deux scripts d'initialisation appliqués avant le
+  premier rendu : `theme-init.js` pour le thème, `catalog-view-init.js` pour la
+  vue du catalogue).
 - **gunicorn** (2 workers, 4 threads) sert l'application — en HTTP sur
   `0.0.0.0:8000` derrière Nginx ou un proxy, ou **en HTTPS directement**
   (`HUB_TLS_CERT`/`HUB_TLS_KEY`, port interne 8443 publié en 443) en standalone.
@@ -185,9 +188,12 @@ sans `mkdir`/`chown` sur l'hôte) :
 ### Consultation (public)
 
 1. Nginx reçoit la requête HTTPS, applique l'allowlist, proxy vers 13744.
-2. Flask lit le catalogue (applications `enabled=1`) et rend la landing page.
-3. Les cartes pointent directement vers les URLs réelles des applications
-   (nouvel onglet par défaut, réglage global dans `/admin/paramètres`).
+2. Flask lit le catalogue (applications `enabled=1`) et rend la landing page —
+   en **deux vues** (cartes et liste) issues du même jeu de données (voir plus
+   bas).
+3. Les cartes et les lignes de la liste pointent directement vers les URLs
+   réelles des applications (nouvel onglet par défaut, réglage global dans
+   `/admin/paramètres`).
 4. Le Hub n'émet **aucune** requête vers ces URLs (pas de proxy, pas de SSRF).
 
 ### Gestion du catalogue (admin)
@@ -262,6 +268,32 @@ premier rendu : aucun flash, et la CSP reste stricte (`script-src 'self'`, aucun
 script inline). La bascule est disponible sur le portail comme dans
 l'administration, y compris sur la page de connexion.
 
+### Vue du catalogue : cartes / liste
+
+La landing rend **les deux vues en HTML serveur** à partir du même jeu de
+données : une section `data-view-panel="cards"` (vue historique, captures
+réelles) et une section `data-view-panel="list"` (rendu dense, **aucune
+capture** — nom, catégorie, statut, description courte, CTA). Le CSS n'en
+affiche qu'une selon l'attribut `data-catalog-view` posé sur `<html>` par
+`catalog-view-init.js` avant le premier rendu, depuis `localStorage` (clé
+`hub_catalog_view`) : `cards` par défaut, aucun clignotement au rechargement.
+
+La bascule est une amélioration progressive : les deux boutons (`aria-pressed`)
+sont révélés par `hub.js`, sans JavaScript la vue Cartes reste le comportement
+par défaut. Recherche et filtres de catégories restent un **seul** moteur
+(`hub.js`) qui marque les deux rendus via les mêmes attributs `data-*` ; seul le
+décompte d'applications suit la vue affichée. La transition de vue est un léger
+fondu, neutralisé par `prefers-reduced-motion`.
+
+### Branding du header
+
+Le libellé affiché à côté du logo SNS (« SNS | HUB ») vient de
+`HUB_BRAND_LABEL` (`app/config.py`, défaut « HUB ») : trim, espaces normalisés,
+caractères de contrôle retirés, 40 caractères au plus, échappement Jinja à
+l'affichage — jamais de HTML. Valeur absente, vide ou invalide = libellé
+générique. Purement visuel : la valeur n'entre dans aucune décision de routage,
+de certificat, de stockage ou de session.
+
 ## Contraintes de sécurité
 
 - Aucun secret dans Git ni dans l'image ; `runtime/` et `.env` sont ignorés.
@@ -275,6 +307,8 @@ l'administration, y compris sur la page de connexion.
   honorés que depuis le gateway du réseau Docker du projet.
 - Validation stricte des URLs du catalogue (http/https uniquement, pas
   d'identifiants embarqués, pas de `javascript:`) ; aucune requête sortante.
+- Branding : `HUB_BRAND_LABEL` est un texte simple, borné et échappé à
+  l'affichage (aucun HTML arbitraire, aucun effet hors rendu).
 
 ## Ce que le Hub n'est pas
 

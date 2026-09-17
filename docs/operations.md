@@ -146,6 +146,27 @@ print(c.execute('PRAGMA user_version').fetchone()); print(c.execute('SELECT name
   sombre par défaut, valeur claire dans les deux blocs clairs — ils doivent
   rester identiques, un test le vérifie).
 
+### Vue du catalogue : Cartes / Liste
+
+- Cartes = comportement historique, vue par défaut ; Liste = rendu dense sans
+  capture, bascule dans la barre de résultats, préférence mémorisée par
+  navigateur (`localStorage`, clé `hub_catalog_view`) — aucun réglage serveur,
+  rien à purger ni à sauvegarder. Sans JavaScript, la vue Cartes s'applique.
+- Ajouter une information à la vue Liste = la poser dans les **deux rendus**
+  (`app/templates/index.html`, sections `data-view-panel="cards"` et
+  `"list"`) avec les mêmes attributs `data-*` : le moteur de filtre et le
+  décompte de la landing sont uniques.
+
+### Branding du header
+
+- Libellé configurable par `HUB_BRAND_LABEL` (« HUB » par défaut), purement
+  visuel : aucun effet sur le hostname, le certificat, la base, les sessions ou
+  les URLs. Texte simple (espaces normalisés, 40 caractères au plus, échappé) ;
+  valeur vide ou invalide = libellé générique.
+- Modifier le libellé d'une installation = changer la variable puis redéployer
+  (`docker compose up -d` suffit) ; le VPS de production peut rester sans la
+  variable.
+
 ## 7. Certificat TLS
 
 ### Importer un certificat (deux méthodes)
@@ -333,7 +354,7 @@ cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID
 sudo scripts/prepare-data-dir.sh        # crée runtime/data au bon propriétaire
 docker compose up -d --build            # ou HUB_IMAGE_TAG=<sha> … --no-build
 docker compose ps                       # attendre « healthy »
-curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.0",…}
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.5.0",…}
 ```
 
 Ensuite :
@@ -349,7 +370,9 @@ Ensuite :
   `CERT_PATH`, `KEY_PATH`) ; sur RHEL/Rocky/Alma, l'y déposer dans
   `/etc/nginx/conf.d/` ;
 - **sauvegarde** : `sudo ./scripts/backup.sh` (§8), à planifier (timer systemd
-  ou cron) — non automatisé par défaut.
+  ou cron) — non automatisé par défaut ;
+- **branding** (optionnel) : `HUB_BRAND_LABEL=<libellé>` dans `.env` pour
+  personnaliser le header de cette installation (voir §6).
 
 ### VPS de production (reproduction à l'identique)
 
@@ -376,7 +399,7 @@ Aucun prérequis sur la machine au-delà de Docker + Portainer, aucun accès SSH
 | Repository URL | `https://github.com/Tetrax/hub` |
 | Repository reference | `refs/heads/main` |
 | Compose path | `compose.standalone.yaml` |
-| Environment variables | `HUB_HOSTNAME=hub.sns-security.lan` (obligatoire) · `HUB_HTTPS_PORT=443` (optionnel) · `HUB_DOCKER_NETWORK` / `HUB_IPV4_ADDRESS` (optionnels, voir ci-dessous) |
+| Environment variables | `HUB_HOSTNAME=hub.sns-security.lan` (obligatoire) · `HUB_HTTPS_PORT=443` (optionnel) · `HUB_BRAND_LABEL=<libellé>` (optionnel, purement visuel) · `HUB_DOCKER_NETWORK` / `HUB_IPV4_ADDRESS` (optionnels, voir ci-dessous) |
 
 Puis *Deploy the stack* → attendre `healthy` → ouvrir
 `https://hub.sns-security.lan` → créer le compte administrateur → installer le

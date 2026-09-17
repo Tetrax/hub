@@ -514,3 +514,68 @@ démarrage effectif, les quatre combinaisons) :
 sert qu'à la vérification stricte (détection d'une faute de frappe) et peut
 rester absente. L'IP statique doit appartenir à un sous-réseau du réseau cible
 (message Docker explicite sinon) ; aucun sous-réseau n'est imposé par le dépôt.
+
+## D19 — Branding du header configurable, purement visuel (`HUB_BRAND_LABEL`)
+
+**Contexte.** Le header affiche « SNS | HUB » (logo + libellé). Une instance
+d'entreprise doit pouvoir afficher un libellé différent (« SNS | MCO HUB ») sans
+que le dépôt — désormais générique et déployable ailleurs — ne fige cette valeur
+pour toutes les installations.
+
+**Décision.** Une variable d'environnement `HUB_BRAND_LABEL`, lue par
+`app/config.py` et exposée au gabarit (`base.html`) ; `HUB` par défaut, donc
+aucune installation existante ne change. Validation volontairement simple :
+trim, espaces internes normalisés, caractères de contrôle retirés, 40 caractères
+au plus ; valeur absente, vide ou invalide → libellé générique ; échappement
+Jinja à l'affichage (jamais de HTML — aucun `|safe`). Les fichiers Compose
+exposent la variable en passthrough neutre (`${HUB_BRAND_LABEL:-}`) ; aucune
+valeur d'instance n'est versionnée.
+
+**Alternatives.** Libellé stocké en base et administrable : hors besoin (c'est
+l'opérateur du déploiement qui personnalise une instance, pas l'utilisateur
+quotidien) et cela ajouterait un écran et une migration. Système de branding
+complet (logo, couleurs, thème par instance) : complexité sans besoin observé.
+Valeur `MCO HUB` codée en dur : transformerait le dépôt générique en fork.
+Validation « tout ou rien » (rejeter une valeur hors contraintes au lieu de la
+normaliser) : un libellé est purement cosmétique, mieux vaut un rendu sûr et
+prévisible qu'un échec de démarrage.
+
+**Conséquences.** Aucune migration, aucun stockage : la variable n'affecte que
+le rendu (hostname, certificat, base, sessions et URLs restent strictement
+indépendants — un test le verrouille). La documentation (`.env.example`,
+README, `docs/operations.md` §6/§9/§10.1) porte la variable ; les tests couvrent
+défaut, trim, longueur, échappement et neutralité.
+
+## D20 — Deux vues du catalogue : Cartes (défaut) et Liste dense
+
+**Contexte.** La grille de cartes (capture, catégorie, statut, description, CTA)
+devient très longue dès que le catalogue dépasse quelques dizaines
+d'applications. Le besoin : un mode compact pour parcourir vite, sans captures,
+dont la préférence suit l'utilisateur — sans réglage global ni impact admin.
+
+**Décision.** La landing rend **les deux vues en HTML serveur** (même jeu de
+données, mêmes attributs `data-*` de filtre) ; une section par vue
+(`data-view-panel="cards"` / `"list"`) et un attribut `data-catalog-view` sur
+`<html>` décident de ce qui est affiché. `catalog-view-init.js` applique la
+préférence mémorisée (`localStorage`, clé `hub_catalog_view`) **avant le premier
+rendu** ; sans choix, cartes. La bascule (boutons `aria-pressed`, révélés par
+JS) est une amélioration progressive : sans JavaScript, la vue Cartes reste le
+comportement historique. Recherche et filtre de catégories restent **un seul
+moteur** (`hub.js`) sur les deux rendus ; seul le décompte suit la vue affichée.
+La vue Liste n'affiche aucune capture ; badges, statuts et CTA sont ceux des
+cartes (position du badge rendue contextuelle : posée sur le visuel en carte,
+dans le flux en liste). Transition de vue en fondu léger, neutralisé par
+`prefers-reduced-motion`.
+
+**Alternatives.** Paramètre d'URL `?view=` rendu côté serveur : chaque bascule
+rechargerait la page (ou exigerait un fetch) et la préférence devrait être
+rejouée à chaque navigation — l'attribut local est plus simple. Transformation
+JS des cartes en lignes : perd le rendu sans JavaScript et dépend de la
+structure exacte des cartes. Second jeu de données JSON : deux sources de vérité
+à maintenir pour le même catalogue. Réglage global dans `/admin` : la
+préférence est par utilisateur, pas par instance.
+
+**Compromis.** Le DOM double (les deux rendus coexistent, un seul affiché) —
+acceptable pour un catalogue de quelques dizaines d'entrées, et c'est le prix
+d'un rendu serveur complet sans JavaScript ; un seul jeu de données et un seul
+moteur de filtre sont conservés. Aucun stockage serveur, aucune migration.

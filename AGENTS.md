@@ -57,6 +57,8 @@ Détails : `docs/architecture.md`.
 | Catégories (CRUD, ordre, réassignation) | `app/catalog.py` (`categories`) |
 | Migration de schéma (`user_version`) | `app/db.py` (`init_db`) |
 | Thème clair/sombre (tokens, bascule) | `app/static/css/hub.css` + `theme-init.js`/`hub.js` |
+| Vues du catalogue (Cartes/Liste, préférence) | `app/templates/index.html` + `hub.js` + `catalog-view-init.js` + `hub.css` |
+| Branding du header (libellé) | `app/config.py` (`HUB_BRAND_LABEL`) + `app/templates/base.html` |
 | Screenshots (validation, stockage) | `app/uploads.py` (magic bytes, noms uuid) |
 | Authentification admin | `app/auth.py` (scrypt, sessions SQLite, CSRF, verrouillage) |
 | En-têtes de sécurité / frontière proxy | `app/security.py` |
@@ -138,12 +140,13 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 304 tests pytest (validation d'entrées, uploads, auth, CRUD,
-  catégories, migration, thème, bundles PKCS#12/PFX et DER, landing, sécurité,
+- `tests/` : 330 tests pytest (validation d'entrées, uploads, auth, CRUD,
+  catégories, migration, thème, branding (`HUB_BRAND_LABEL`), vues du catalogue
+  (Cartes/Liste), bundles PKCS#12/PFX et DER, landing, sécurité,
   certificats/rollback, intégration app ↔ helper par socket, configuration de
   déploiement : Compose générique/surcharge, durcissement systemd, portabilité).
 - `tests/browser/acceptance.py` : recette navigateur réelle (desktop, mobile,
-  admin) via Playwright.
+  admin, thèmes, vues Cartes/Liste) via Playwright.
 - `tests/browser/capture_apps.py` : captures des applications pour le catalogue.
 - `tests/vm/generic-vm-check.sh` : recette « VM générique » isolée (projet
   Compose jetable, sans Nginx/Certbot/helper) — healthcheck, landing, admin,
@@ -195,6 +198,11 @@ docker compose exec web python -m app.manage reset-admin
   thème clair = second jeu, les deux blocs clairs doivent rester identiques).
 - Catégories : entité en base (`categories`), jamais de texte libre dans `apps` ;
   le repli « Autres » est protégé (ni suppression ni renommage).
+- Catalogue : deux rendus serveur (Cartes par défaut, Liste dense sans captures)
+  portent les mêmes attributs `data-*` ; le moteur de recherche/filtre reste
+  unique (`hub.js`) et seul le décompte suit la vue affichée.
+- Branding : `HUB_BRAND_LABEL` est un libellé purement visuel (validé, borné,
+  échappé) — jamais une entrée qui influence hostname, TLS, base ou sessions.
 - Erreurs : messages compréhensibles côté UI, détails uniquement dans les logs.
 
 ## Principe directeur

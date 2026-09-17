@@ -54,6 +54,21 @@ aucune requête vers elles.
   certificat définitif (**PKCS#12 de la PKI**) depuis *Administration →
   Certificats* — **sans SSH et sans redémarrage** (le serveur est rechargé et le
   certificat réellement servi est vérifié, avec rollback en cas d'échec).
+- **Branding configurable (V1.5)** : le libellé affiché à côté du logo SNS dans
+  le header (`SNS | <libellé>`) est réglé par `HUB_BRAND_LABEL` — `HUB` par
+  défaut, donc aucune installation existante ne change. Purement visuel :
+  aucune conséquence sur le hostname, le certificat, la base, les sessions ou
+  les URLs ; texte simple (espaces normalisés, 40 caractères au plus, échappé à
+  l'affichage).
+- **Deux vues du catalogue (V1.5)** : **Cartes** (par défaut — captures réelles,
+  comportement historique inchangé) et **Liste** (dense : nom, catégorie,
+  statut, description courte et CTA, sans capture, pensée pour plusieurs
+  dizaines d'applications). La bascule est discrète (barre de résultats),
+  accessible au clavier (`aria-pressed`), mémorisée par navigateur
+  (`localStorage`, clé `hub_catalog_view`) et appliquée avant le premier rendu
+  (aucun clignotement) ; recherche et filtres de catégories sont strictement
+  identiques dans les deux vues (un seul moteur, sans JavaScript la vue Cartes
+  reste le comportement par défaut).
 
 ## Architecture
 
@@ -105,7 +120,7 @@ git clone https://github.com/Tetrax/hub && cd hub
 cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID/GID…
 sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
 docker compose up -d --build
-curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.1",…}
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.5.0",…}
 ```
 
 Sur le VPS, `.env` porte `COMPOSE_FILE=compose.yaml:compose.vps.yaml` : les
@@ -122,6 +137,8 @@ Portainer, hors ligne, restauration) : [`docs/operations.md`](docs/operations.md
    - **Compose path** : `compose.standalone.yaml`
    - **Environment variables** : `HUB_HOSTNAME=hub.sns-security.lan`
      (et, si besoin, `HUB_HTTPS_PORT=443`) ;
+   - personnalisation du header (**optionnel**) : `HUB_BRAND_LABEL=<libellé>`
+     (`HUB` par défaut ; purement visuel) ;
    - rattachement à un réseau Docker existant (**optionnel**) :
      `HUB_DOCKER_NETWORK=<nom du réseau>` · `HUB_DOCKER_NETWORK_EXTERNAL=true`
      · `HUB_IPV4_ADDRESS=<adresse>` — à laisser vides pour un déploiement

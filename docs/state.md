@@ -1,9 +1,8 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.4.1 livrée — standalone à HTTPS direct (un seul conteneur) avec
-rattachement optionnel à un réseau Docker existant et IPv4 statique, aucune
-action ouverte**.
+Statut : **V1.5.0 livrée — branding du header configurable (`HUB_BRAND_LABEL`)
+et vue Liste du catalogue (Cartes par défaut), aucune action ouverte**.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -12,6 +11,12 @@ action ouverte**.
 
 ## Version et périmètre
 
+- **V1.5** : évolution UI ciblée — **branding du header configurable**
+  (`HUB_BRAND_LABEL`, « HUB » par défaut, purement visuel, validé et échappé,
+  voir D19) et **deux vues du catalogue** : Cartes (par défaut, comportement
+  historique) et **Liste dense sans captures**, avec bascule accessible,
+  préférence par navigateur (`localStorage`, clé `hub_catalog_view`) appliquée
+  avant le premier rendu et filtres/recherche strictement partagés (voir D20).
 - **V1.4** : déploiement **standalone** Portainer — `compose.standalone.yaml`,
   **un seul conteneur qui sert HTTPS directement** (aucun proxy, aucun helper,
   aucun socket Docker), certificat temporaire de bootstrap au premier démarrage,
@@ -50,6 +55,7 @@ page et `/healthz`.
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' --resolve hub.valdev.me:443:127.0.0.1 https://hub.valdev.me/
 curl -s --resolve hub.valdev.me:443:127.0.0.1 https://hub.valdev.me/healthz
+curl -s --resolve hub.valdev.me:443:127.0.0.1 https://hub.valdev.me/ | grep -o 'class="brand-name">[^<]*<'
 docker compose ps && docker inspect -f '{{.State.Health.Status}}' hub-web
 sudo nginx -t && systemctl is-active hub-cert-helper.service
 cd /home/tetrax/workspace/hub && .venv/bin/python -m pytest tests/ -q
@@ -64,6 +70,15 @@ HUB_BASE_URL=http://127.0.0.1:13744 HUB_SCOPE=public .venv/bin/python tests/brow
   administrables (création, renommage, ordre, suppression avec réassignation).
 - **Thème** : sombre (référence) / clair, bascule mémorisée par navigateur,
   préférence système respectée à la première visite.
+- **Affichage du catalogue (V1.5)** : vue **Cartes** par défaut (comportement
+  inchangé) et vue **Liste** dense sans captures ; bascule accessible
+  (clavier, `aria-pressed`) dans la barre de résultats, préférence par
+  navigateur (`localStorage`, clé `hub_catalog_view`) appliquée avant le
+  premier rendu, recherche et catégories strictement identiques dans les deux
+  vues.
+- **Branding (V1.5)** : libellé du header configurable par `HUB_BRAND_LABEL`
+  (« HUB » par défaut ; purement visuel). Le VPS de production reste sans la
+  variable.
 - **Administration** : compte unique créé au premier accès (`/admin/setup`),
   sessions serveur, CSRF, verrouillage après échecs.
 - **Migration de base** : schéma en `user_version = 2` (migration V1.1 appliquée
