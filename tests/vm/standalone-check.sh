@@ -256,6 +256,75 @@ else
 fi
 
 echo
+echo "### Phase 9ter — rattachement à un réseau Docker existant + IPv4 statique"
+EXT_NET="${STANDALONE_CHECK_NETWORK:-hub-standalone-ext}"
+EXT_PROJECT="${PROJECT}-net"
+EXT_PORT=$((HTTPS_PORT + 1))
+docker network rm "$EXT_NET" >/dev/null 2>&1 || true
+# Sous-réseau de recette : le premier libre parmi des candidats hors des pools
+# par défaut de Docker (une autre pile peut occuper le premier essayé).
+EXT_SUBNET=""; EXT_IP=""; EXT_ERR=""
+for candidate in "${STANDALONE_CHECK_SUBNET:-}" 10.99.11.0/24 10.99.12.0/24 10.99.13.0/24; do
+  [ -n "$candidate" ] || continue
+  if EXT_ERR=$(docker network create --subnet "$candidate" "$EXT_NET" 2>&1); then
+    EXT_SUBNET="$candidate"
+    EXT_IP="${STANDALONE_CHECK_IP:-${candidate%.0/24}.12}"
+    break
+  fi
+done
+if [ -n "$EXT_SUBNET" ]; then
+  ok "réseau de recette créé ($EXT_NET, $EXT_SUBNET)"
+else
+  ko "création du réseau de recette — ${EXT_ERR:-échec inconnu}"
+fi
+
+ext_compose() { # ext_compose [IP=...] sous-commande...
+  HUB_HOSTNAME="$HOSTNAME_TEST" HUB_HTTPS_PORT="$EXT_PORT" HUB_IMAGE_TAG="$IMAGE_TAG" \
+  HUB_GIT_SHA="$IMAGE_TAG" HUB_DOCKER_NETWORK="$EXT_NET" HUB_DOCKER_NETWORK_EXTERNAL=true \
+  HUB_IPV4_ADDRESS="${EXT_IP_FORCE:-$EXT_IP}" \
+  docker compose -p "$EXT_PROJECT" -f compose.standalone.yaml "$@"
+}
+ext_container() {
+  docker ps -aqf "label=com.docker.compose.project=${EXT_PROJECT}" \
+    -f "label=com.docker.compose.service=web" | head -1
+}
+
+# 1) réseau externe + IPv4 statique
+ext_compose up -d >/dev/null 2>&1 && ok "déploiement sur réseau existant avec IPv4 statique" \
+  || ko "déploiement sur réseau existant avec IPv4 statique"
+sleep 10
+EC="$(ext_container)"
+check_eq "conteneur attaché au réseau existant" "$EXT_NET" \
+  "$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$EC" 2>/dev/null)"
+check_eq "IPv4 statique réellement portée" "$EXT_IP" \
+  "$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$EC" 2>/dev/null)"
+check_eq "healthcheck vert (HTTPS direct, IP statique)" "healthy" \
+  "$(docker inspect -f '{{.State.Health.Status}}' "$EC" 2>/dev/null)"
+ext_compose down -v >/dev/null 2>&1
+check "réseau externe préservé après down" "docker network inspect '$EXT_NET' >/dev/null 2>&1"
+
+# 2) réseau externe SANS IPv4 statique → Docker attribue l'adresse
+EXT_IP_FORCE="" ext_compose up -d >/dev/null 2>&1 \
+  && ok "déploiement sur réseau existant sans IPv4 statique" \
+  || ko "déploiement sur réseau existant sans IPv4 statique"
+sleep 10
+EC="$(ext_container)"
+AUTO_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$EC" 2>/dev/null)"
+check "adresse attribuée automatiquement par Docker" "[ -n '$AUTO_IP' ]"
+check_eq "réseau cible toujours respecté" "$EXT_NET" \
+  "$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$EC" 2>/dev/null)"
+ext_compose down -v >/dev/null 2>&1
+
+# 3) déploiement standard (aucune variable réseau) : inchangé
+SC="$(web_container)"
+check_eq "standard : réseau du projet (comportement historique)" "${PROJECT}_default" \
+  "$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$SC" 2>/dev/null)"
+check "standard : adresse attribuée par Docker" \
+  "[ -n \"$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$SC" 2>/dev/null)\" ]"
+check_eq "standard : certificat servi inchangé par ce déploiement" "$SERVED_FP" "$(served_fingerprint)"
+docker network rm "$EXT_NET" >/dev/null 2>&1 || true
+
+echo
 echo "### Phase 10 — nettoyage"
 if [ "$KEEP" = "--keep" ]; then
   echo "  --keep : stack conservée (projet $PROJECT, port $HTTPS_PORT)"

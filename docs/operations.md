@@ -376,7 +376,7 @@ Aucun prérequis sur la machine au-delà de Docker + Portainer, aucun accès SSH
 | Repository URL | `https://github.com/Tetrax/hub` |
 | Repository reference | `refs/heads/main` |
 | Compose path | `compose.standalone.yaml` |
-| Environment variables | `HUB_HOSTNAME=hub.sns-security.lan` (obligatoire) · `HUB_HTTPS_PORT=443` (optionnel) |
+| Environment variables | `HUB_HOSTNAME=hub.sns-security.lan` (obligatoire) · `HUB_HTTPS_PORT=443` (optionnel) · `HUB_DOCKER_NETWORK` / `HUB_IPV4_ADDRESS` (optionnels, voir ci-dessous) |
 
 Puis *Deploy the stack* → attendre `healthy` → ouvrir
 `https://hub.sns-security.lan` → créer le compte administrateur → installer le
@@ -392,6 +392,43 @@ Détails utiles :
   avec `cap_drop: ALL` et `no-new-privileges` ;
 - mise à jour d'image : redéployer la stack (ou changer `HUB_IMAGE_TAG`) ; les
   volumes et le certificat actif sont conservés.
+
+#### Rattacher Hub à un réseau Docker existant (optionnel)
+
+Utile pour rejoindre un réseau d'entreprise (reverse proxy mutualisé, supervision,
+annuaire). Tout se fait par variables, dans Portainer — rien n'est figé dans le
+dépôt, et le déploiement standard reste inchangé si rien n'est saisi :
+
+| Variable | Effet |
+|---|---|
+| `HUB_DOCKER_NETWORK=<nom>` | Hub rejoint ce réseau Docker au lieu du réseau du stack. Vide (défaut) : réseau `<nom du stack>_default`, créé par Compose. |
+| `HUB_DOCKER_NETWORK_EXTERNAL=true` | Exige que ce réseau **existe déjà** (sinon le déploiement échoue explicitement). Recommandé dès qu'on nomme un réseau d'entreprise. |
+| `HUB_IPV4_ADDRESS=<adresse>` | IPv4 **statique** de Hub sur ce réseau. Vide (défaut) : Docker attribue une adresse normalement. |
+
+```yaml
+# Exemple : Network → Environment variables
+HUB_HOSTNAME=hub.sns-security.lan
+HUB_DOCKER_NETWORK=reseau-applicatif
+HUB_DOCKER_NETWORK_EXTERNAL=true
+HUB_IPV4_ADDRESS=172.30.250.12
+```
+
+Points vérifiés par la recette (`tests/vm/standalone-check.sh`) :
+
+- **réseau attribué par Docker** quand `HUB_IPV4_ADDRESS` est vide — les trois
+  variables peuvent être laissées vides sans invalider la configuration ;
+- **IP statique réellement portée** par le conteneur quand elle est fournie ;
+- **`down` préserve un réseau existant** : Compose ne supprime que les réseaux
+  qu'il a lui-même créés ;
+- l'IP statique doit appartenir à un **sous-réseau du réseau cible** — sinon
+  Docker refuse au démarrage (`no configured subnet contains IP address …`) ;
+- un nom de réseau inexistant avec `HUB_DOCKER_NETWORK_EXTERNAL=true` échoue
+  explicitement (`declared as external, but could not be found`) ; sans ce
+  garde-fou, Compose créerait un réseau homonyme et Hub resterait isolé ;
+- si un reverse proxy se trouve sur le réseau rejoint, `HUB_TRUSTED_PROXY_CIDRS`
+  peut être renseigné en complément (facultatif : Hub termine TLS lui-même) ;
+- le redéploiement ne change rien aux **volumes**, au **certificat actif**, au
+  **healthcheck** ni au chemin de dépôt Portainer.
 
 ### 10.2 Variante générique (Nginx/proxy sur l'hôte, ou VM gérée en SSH)
 
@@ -499,6 +536,9 @@ manuel, ou certificat géré par le proxy).
 | Standalone : « PID du serveur HTTPS introuvable » | le fichier `HUB_GUNICORN_PIDFILE` (`/tmp/gunicorn.pid`) est absent : vérifier que le conteneur a démarré normalement (`docker logs`) |
 | Standalone : activation refusée, « paire précédente restaurée » | le serveur n'a pas présenté la nouvelle paire : vérifier les journaux du conteneur ; le Hub reste disponible avec l'ancienne paire |
 | Standalone : `volume de certificats (/certs) non inscriptible` | volume créé hors de l'image (ou montage en lecture seule) : recréer la stack pour laisser Docker initialiser `hub_certs` |
+| Standalone : Hub n'apparaît pas sur le réseau d'entreprise | `HUB_DOCKER_NETWORK` saisi sans `HUB_DOCKER_NETWORK_EXTERNAL=true` : Compose a créé un réseau **homonyme** (vérifier `docker network ls`) — ajouter le garde-fou puis redéployer |
+| Standalone : « declared as external, but could not be found » | le réseau nommé dans `HUB_DOCKER_NETWORK` n'existe pas (nom ou hôte erroné) : le créer ou corriger la variable |
+| Standalone : « no configured subnet contains IP address » | `HUB_IPV4_ADDRESS` n'appartient pas à un sous-réseau du réseau cible : choisir une adresse libre de ce sous-réseau (ou retirer la variable) |
 
 ## 14. Contrôles de recette
 

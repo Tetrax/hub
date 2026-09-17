@@ -184,6 +184,76 @@ def test_no_subnet_is_imposed():
         assert not network.get("ipam"), "sous-réseau imposé"
 
 
+# --- Réseau Docker externe et IPv4 statique (toutes deux optionnelles) --------
+
+
+def test_network_interpolation_stays_environment_neutral():
+    """Le réseau du stack reste générique : aucune valeur propre à un hôte."""
+    text = read(STANDALONE)
+    assert "${HUB_DOCKER_NETWORK:-${COMPOSE_PROJECT_NAME:-hub-standalone}_default}" in text
+    assert "external: ${HUB_DOCKER_NETWORK_EXTERNAL:-false}" in text
+    assert "ipv4_address: ${HUB_IPV4_ADDRESS:-}" in text
+    # Seule adresse littérale tolérée : la boucle locale du healthcheck.
+    addresses = set(re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", text))
+    assert addresses <= {"127.0.0.1"}, f"adresse propre à un environnement : {addresses}"
+
+
+@requires_compose
+def test_network_defaults_to_the_project_network():
+    """Aucune variable réseau : réseau du projet (comportement historique)."""
+    network = render()["networks"]["default"]
+    assert network["name"].startswith("hub-standalone")
+    assert network["name"].endswith("_default")
+    assert network.get("external", False) is False
+    assert "ipam" not in network
+
+
+@requires_compose
+def test_static_ip_is_optional_and_dropped_when_empty():
+    # Sans HUB_IPV4_ADDRESS : la clé disparaît du rendu (configuration valide,
+    # Docker attribue une adresse normalement).
+    service = render()["services"]["web"]
+    assert "ipv4_address" not in (service.get("networks") or {}).get("default", {})
+    # Avec HUB_IPV4_ADDRESS : l'adresse est portée par le service.
+    configured = render(extra_env={"HUB_IPV4_ADDRESS": "172.30.250.12"})["services"]["web"]
+    assert configured["networks"]["default"]["ipv4_address"] == "172.30.250.12"
+
+
+@requires_compose
+def test_external_network_attachment_is_variable_driven():
+    document = render(
+        extra_env={"HUB_DOCKER_NETWORK": "hub-corp", "HUB_DOCKER_NETWORK_EXTERNAL": "true"}
+    )
+    network = document["networks"]["default"]
+    assert network["name"] == "hub-corp"
+    assert network["external"] is True
+
+
+@requires_compose
+def test_empty_network_variables_never_break_the_standard_case():
+    """Variables laissées vides (champ Portainer vide) : configuration valide."""
+    document = render(
+        extra_env={
+            "HUB_DOCKER_NETWORK": "",
+            "HUB_DOCKER_NETWORK_EXTERNAL": "",
+            "HUB_IPV4_ADDRESS": "",
+        }
+    )
+    network = document["networks"]["default"]
+    assert network["name"].endswith("_default")
+    assert network.get("external", False) is False
+    assert "ipv4_address" not in (document["services"]["web"].get("networks") or {}).get(
+        "default", {}
+    )
+
+
+def test_network_variables_are_documented():
+    for relative in (".env.example", "docs/operations.md", "README.md"):
+        text = read(relative)
+        assert "HUB_DOCKER_NETWORK" in text, relative
+        assert "HUB_IPV4_ADDRESS" in text, relative
+
+
 # --- Détection de dérive ------------------------------------------------------
 
 

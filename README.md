@@ -105,7 +105,7 @@ git clone https://github.com/Tetrax/hub && cd hub
 cp .env.example .env                    # ajuster HUB_BIND_IP, HUB_PORT, HUB_UID/GID…
 sudo scripts/prepare-data-dir.sh        # propriétaire du répertoire de données
 docker compose up -d --build
-curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.0",…}
+curl -s http://127.0.0.1:13744/healthz  # {"status":"ok","version":"1.4.1",…}
 ```
 
 Sur le VPS, `.env` porte `COMPOSE_FILE=compose.yaml:compose.vps.yaml` : les
@@ -122,6 +122,11 @@ Portainer, hors ligne, restauration) : [`docs/operations.md`](docs/operations.md
    - **Compose path** : `compose.standalone.yaml`
    - **Environment variables** : `HUB_HOSTNAME=hub.sns-security.lan`
      (et, si besoin, `HUB_HTTPS_PORT=443`) ;
+   - rattachement à un réseau Docker existant (**optionnel**) :
+     `HUB_DOCKER_NETWORK=<nom du réseau>` · `HUB_DOCKER_NETWORK_EXTERNAL=true`
+     · `HUB_IPV4_ADDRESS=<adresse>` — à laisser vides pour un déploiement
+     standard (Docker attribue alors l'adresse). Aucune valeur par défaut
+     propre à un environnement dans le dépôt ;
 3. **Deploy the stack** → attendre `healthy` ;
 4. ouvrir `https://hub.sns-security.lan` (accepter le certificat temporaire) ;
 5. créer le compte administrateur ;

@@ -19,7 +19,8 @@ aucune application référencée.
 - **Conteneur** : `hub-web` (Compose projet `hub`), bind `127.0.0.1:13744` → 8000
 - **Trois packagings** : VPS (`compose.yaml` + `compose.vps.yaml`, Nginx + helper),
   générique (proxy externe), **standalone Portainer** (`compose.standalone.yaml` :
-  un conteneur qui sert HTTPS directement, certificat géré depuis la page web)
+  un conteneur qui sert HTTPS directement, certificat géré depuis la page web ;
+  rattachement optionnel à un réseau Docker existant + IPv4 statique par variables)
 
 ## Stack
 
@@ -137,7 +138,7 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 227 tests pytest (validation d'entrées, uploads, auth, CRUD,
+- `tests/` : 304 tests pytest (validation d'entrées, uploads, auth, CRUD,
   catégories, migration, thème, bundles PKCS#12/PFX et DER, landing, sécurité,
   certificats/rollback, intégration app ↔ helper par socket, configuration de
   déploiement : Compose générique/surcharge, durcissement systemd, portabilité).

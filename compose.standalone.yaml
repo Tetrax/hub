@@ -35,6 +35,11 @@ services:
       # Seul HTTPS est publié : le serveur applicatif termine TLS (voir D16).
       # Ports internes non privilégiés → aucun CAP_NET_BIND_SERVICE nécessaire.
       - "${HUB_HTTPS_PORT:-443}:8443"
+    networks:
+      default:
+        # IPv4 statique OPTIONNELLE : vide → Compose omet la clé et Docker
+        # attribue une adresse normalement (aucune valeur par défaut imposée).
+        ipv4_address: ${HUB_IPV4_ADDRESS:-}
     environment:
       HUB_DATA_DIR: /data
       # Nom porté par le certificat : validé à l'import du PKCS#12/PEM.
@@ -69,3 +74,21 @@ services:
 volumes:
   hub_data:
   hub_certs:
+
+networks:
+  # Réseau du stack. Par défaut : le réseau Docker du projet
+  # (<nom du stack>_default), donc aucune valeur propre à un environnement et
+  # aucun prérequis — c'est le comportement historique, inchangé.
+  #
+  # Pour rattacher Hub à un réseau Docker EXISTANT :
+  #   HUB_DOCKER_NETWORK=<nom du réseau>            (obligatoire pour ce cas)
+  #   HUB_DOCKER_NETWORK_EXTERNAL=true              (optionnel : exige que le
+  #                                                  réseau existe déjà, sinon
+  #                                                  Compose peut en créer un
+  #                                                  homonyme)
+  #   HUB_IPV4_ADDRESS=<adresse>                    (optionnel : IPv4 statique —
+  #                                                  le réseau cible doit avoir un
+  #                                                  sous-réseau qui la contient)
+  default:
+    name: ${HUB_DOCKER_NETWORK:-${COMPOSE_PROJECT_NAME:-hub-standalone}_default}
+    external: ${HUB_DOCKER_NETWORK_EXTERNAL:-false}

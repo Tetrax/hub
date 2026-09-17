@@ -59,7 +59,7 @@ changent selon le déploiement. Deux profils sont supportés par le même dépô
 | `compose.yaml` | déploiement **générique** : durcissement, healthcheck, image, port, données — aucune valeur propre à une machine | versionné |
 | `compose.vps.yaml` | **surcharge minimale** du VPS : sous-réseau fixé, proxy de confiance local, hostname, socket du helper | versionné |
 | `.env` | valeurs d'installation : `HUB_BIND_IP`, `HUB_PORT`, `HUB_UID/GID`, `HUB_DATA_PATH`, `HUB_TRUSTED_PROXY_CIDRS`, `HUB_TLS_HOSTNAME`, `HUB_BACKUP_DIR`, `COMPOSE_FILE` | local (jamais versionné) |
-| `compose.standalone.yaml` | déploiement **standalone** (Portainer) : HTTPS direct, un seul conteneur, volumes nommés, une seule variable (`HUB_HOSTNAME`) | versionné |
+| `compose.standalone.yaml` | déploiement **standalone** (Portainer) : HTTPS direct, un seul conteneur, volumes nommés, une seule variable obligatoire (`HUB_HOSTNAME`) — réseau Docker existant et IPv4 statique optionnels (D18) | versionné |
 | `.env.example` | modèle documenté, sans secret | versionné |
 
 `COMPOSE_FILE` (dans `.env`) sélectionne les fichiers :

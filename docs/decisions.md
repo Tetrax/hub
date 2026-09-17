@@ -475,3 +475,42 @@ Hub), serveur HTTPS du conteneur (standalone).
 La validation, l'écriture des générations, la bascule atomique et le rollback
 restent assurés par **`helper/hub_certctl.py`** : le standalone ne duplique ni
 les règles de validation, ni les primitives d'activation.
+
+## D18 — Réseau Docker externe et IPv4 statique : optionnels, tout par variables
+
+**Contexte.** Certaines VM d'entreprise imposent un réseau Docker existant
+(reverse proxy mutualisé, supervision) et parfois une adresse fixe attendue par
+la règle de filtrage. Le standalone doit pouvoir s'y rattacher **sans figer
+aucune valeur propre à un environnement** dans le dépôt.
+
+**Décision.** Trois variables optionnelles dans `compose.standalone.yaml`,
+saisies dans Portainer ; aucune n'est nécessaire au déploiement standard :
+
+| Variable | Défaut | Effet |
+|---|---|---|
+| `HUB_DOCKER_NETWORK` | vide | réseau à rejoindre ; vide → réseau du stack (`<projet>_default`) |
+| `HUB_DOCKER_NETWORK_EXTERNAL` | `false` | exige que ce réseau existe déjà (échec explicite sinon) |
+| `HUB_IPV4_ADDRESS` | vide | IPv4 statique ; vide → adresse attribuée par Docker |
+
+Mécanisme retenu, **vérifié en conditions réelles** (Compose rendu puis
+démarrage effectif, les quatre combinaisons) :
+
+- `ipv4_address: ${HUB_IPV4_ADDRESS:-}` : une valeur **vide est retirée du
+  rendu** par Compose — la configuration reste valide et Docker attribue une
+  adresse normalement (aucune valeur par défaut imposée) ;
+- `name: ${HUB_DOCKER_NETWORK:-${COMPOSE_PROJECT_NAME:-hub-standalone}_default}`
+  reproduit exactement le nom que Compose donnerait sans cette section : le
+  déploiement standard est **inchangé**. Un `name` vide serait refusé
+  (« invalid network name or ID: value is empty ») — d'où le défaut explicite ;
+- `external: ${HUB_DOCKER_NETWORK_EXTERNAL:-false}` : garde-fou **optionnel**
+  (`true`) qui refuse un réseau inexistant (`declared as external, but could
+  not be found`) — sans lui, Compose **crée** un réseau homonyme et le Hub
+  reste isolé du réseau attendu. Un booléen vide n'est pas acceptable
+  (« invalid boolean ») : le défaut est donc explicite, jamais implicite ;
+- le `down` **préserve** un réseau que Compose n'a pas créé ; volumes,
+  certificat actif, healthcheck et chemin de dépôt Portainer restent inchangés.
+
+**Compromis.** Trois variables plutôt qu'une : `HUB_DOCKER_NETWORK_EXTERNAL` ne
+sert qu'à la vérification stricte (détection d'une faute de frappe) et peut
+rester absente. L'IP statique doit appartenir à un sous-réseau du réseau cible
+(message Docker explicite sinon) ; aucun sous-réseau n'est imposé par le dépôt.
