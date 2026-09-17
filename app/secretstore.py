@@ -1,17 +1,20 @@
-"""Stockage dédié des secrets email (mot de passe SMTP, secret client Microsoft 365).
+"""Stockage dédié des secrets administrables (email + jeton GitHub).
 
 Les secrets ne sont **jamais** des paramètres ordinaires : ils ne vivent ni en
 base, ni dans une réponse HTTP, ni dans un log. Chaque secret est un fichier du
 répertoire de données (`secrets/`, 0700, fichier 0600), écrit de façon atomique
-par l'administration, relu en mémoire uniquement au moment de l'envoi.
+par l'administration, relu en mémoire uniquement au moment de l'usage.
+
+Secrets gérés : mot de passe SMTP, secret client Microsoft 365, jeton GitHub
+(lecture seule, portée `Actions: Read`).
 
 Priorité (source de vérité) :
 
 1. le secret enregistré depuis l'administration est prioritaire dès qu'il existe ;
-2. la variable d'environnement (`HUB_SMTP_PASSWORD`, `HUB_MICROSOFT_CLIENT_SECRET`)
-   ne sert que de bootstrap — elle n'est utilisée que tant qu'aucun secret
-   administré n'existe. Supprimer un secret administré ré-expose la valeur du
-   déploiement, ce que l'UI indique explicitement (provenance).
+2. la variable d'environnement (`HUB_SMTP_PASSWORD`, `HUB_MICROSOFT_CLIENT_SECRET`,
+   `HUB_GITHUB_TOKEN`) ne sert que de bootstrap — elle n'est utilisée que tant
+   qu'aucun secret administré n'existe. Supprimer un secret administré ré-expose
+   la valeur du déploiement, ce que l'UI indique explicitement (provenance).
 
 Les écritures sont atomiques (fichier temporaire + `os.replace`), refusent de
 suivre un lien symbolique, et le répertoire est créé en 0700. Aucune fonction de
@@ -28,7 +31,8 @@ from pathlib import Path
 
 SMTP_PASSWORD = "smtp-password"
 MICROSOFT365_CLIENT_SECRET = "microsoft365-client-secret"
-SECRET_NAMES = (SMTP_PASSWORD, MICROSOFT365_CLIENT_SECRET)
+GITHUB_TOKEN = "github-token"
+SECRET_NAMES = (SMTP_PASSWORD, MICROSOFT365_CLIENT_SECRET, GITHUB_TOKEN)
 SECRETS_DIRNAME = "secrets"
 MAX_SECRET_BYTES = 4096
 

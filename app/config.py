@@ -81,7 +81,7 @@ def load_config(base_dir: Path | None = None, overrides: dict | None = None) -> 
         "GITHUB_TOKEN": os.environ.get("HUB_GITHUB_TOKEN", "").strip(),
         # Secrets email (V1.6.1) : **bootstrap uniquement** — la configuration
         # enregistrée dans l'administration (fichiers de `HUB_DATA_DIR/secrets/`)
-        # est prioritaire dès qu'elle existe (voir app/mailsecrets.py).
+        # est prioritaire dès qu'elle existe (voir app/secretstore.py).
         "SMTP_PASSWORD": os.environ.get("HUB_SMTP_PASSWORD", ""),
         "MICROSOFT_CLIENT_SECRET": os.environ.get("HUB_MICROSOFT_CLIENT_SECRET", ""),
         "TRIVY_SCHEDULER_ENABLED": _env_bool("HUB_TRIVY_SCHEDULER", True),

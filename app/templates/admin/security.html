@@ -16,9 +16,9 @@
 
 {% if settings.sync_enabled and not github_token_set %}
 <p class="notice notice-error">
-  Surveillance activée mais jeton GitHub absent : fournir <code>HUB_GITHUB_TOKEN</code>
-  (lecture seule, portée Actions) au déploiement. Aucune synchronisation n'aura lieu
-  tant qu'il manque.
+  Surveillance activée mais aucun jeton GitHub configuré : le saisir ci-dessous
+  (lecture seule, portée Actions: Read), ou fournir <code>HUB_GITHUB_TOKEN</code>
+  au déploiement. Aucune synchronisation n'aura lieu tant qu'il manque.
 </p>
 {% endif %}
 {% if not settings.sync_enabled %}
@@ -113,9 +113,19 @@
       <input type="checkbox" name="sync_enabled" value="1" {% if settings.sync_enabled %}checked{% endif %}>
       Activer la surveillance (récupération automatique du rapport Trivy)
     </label>
-    <p class="form-hint">
-      Jeton GitHub : {{ 'fourni au déploiement' if github_token_set else 'absent (HUB_GITHUB_TOKEN requis pour activer)' }}.
-    </p>
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="github_token_new">Jeton GitHub (lecture seule, portée Actions: Read)</label>
+        <input class="input" id="github_token_new" name="github_token_new" type="password"
+               autocomplete="new-password" placeholder="laisser vide pour conserver le secret actuel">
+        <p class="form-hint">
+          Jeton : {{ secret_source_labels.get(github_token_source, github_token_source or 'non configuré') }}.
+          Un champ vide conserve le jeton existant ; la valeur n'est jamais réaffichée.
+          Requis pour activer la surveillance : le téléchargement de l'artefact CI exige
+          une authentification, même pour un dépôt public.
+        </p>
+      </div>
+    </div>
     <label class="checkbox-row">
       <input type="checkbox" name="notifications_enabled" value="1" {% if settings.notifications_enabled %}checked{% endif %}>
       Activer les notifications email (uniquement en cas de changement)
@@ -264,9 +274,21 @@
   <div class="secret-actions">
     <p class="form-label">Secrets enregistrés (suppression explicite uniquement)</p>
     <div class="secret-row">
+      <span>Jeton GitHub : <strong>{{ secret_source_labels.get(github_token_source, github_token_source or 'non configuré') }}</strong></span>
+      {% if github_token_source == 'admin' %}
+      <form method="post" action="{{ url_for('security.secret_delete') }}"
+            data-confirm="Supprimer le jeton GitHub enregistré ?">
+        <input type="hidden" name="_csrf" value="{{ csrf }}">
+        <input type="hidden" name="name" value="{{ secret_names.github }}">
+        <input type="hidden" name="confirm_delete" value="1">
+        <button class="button" type="submit">Supprimer le secret</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="secret-row">
       <span>Mot de passe SMTP : <strong>{{ secret_source_labels.get(secrets.smtp_source, secrets.smtp_source or 'non configuré') }}</strong></span>
       {% if secrets.smtp_source == 'admin' %}
-      <form method="post" action="{{ url_for('security.email_secret_delete') }}"
+      <form method="post" action="{{ url_for('security.secret_delete') }}"
             data-confirm="Supprimer le mot de passe SMTP enregistré ?">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="name" value="{{ secret_names.smtp }}">
@@ -278,7 +300,7 @@
     <div class="secret-row">
       <span>Secret client Microsoft 365 : <strong>{{ secret_source_labels.get(secrets.m365_source, secrets.m365_source or 'non configuré') }}</strong></span>
       {% if secrets.m365_source == 'admin' %}
-      <form method="post" action="{{ url_for('security.email_secret_delete') }}"
+      <form method="post" action="{{ url_for('security.secret_delete') }}"
             data-confirm="Supprimer le secret client Microsoft 365 enregistré ?">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <input type="hidden" name="name" value="{{ secret_names.m365 }}">

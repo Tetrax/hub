@@ -10,7 +10,7 @@ Transport (V1.6.1, D23) : **SMTP** ou **Microsoft 365 / Graph**, sélectionné d
 l'administration et unique à la fois. Le moteur Trivy ne connaît que
 `send_delta_email` ; les détails de chaque transport vivent ici et dans
 `app/graphmail.py`. Les secrets (mot de passe SMTP, secret client Microsoft 365)
-viennent de `app/mailsecrets.py` (fichiers dédiés du répertoire de données,
+viennent de `app/secretstore.py` (fichiers dédiés du répertoire de données,
 l'environnement ne servant que de bootstrap) et ne sont jamais rendus ni loggés.
 
 Le rendu utilise la direction artistique SNS en HTML simple (tables, styles en
@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr
 
-from . import graphmail, mailsecrets, trivy_monitor
+from . import graphmail, secretstore, trivy_monitor
 
 SEVERITY_LABELS = {"critical": "CRITICAL", "high": "HIGH"}
 KIND_LABELS = {
@@ -78,12 +78,12 @@ def load_email_state(app) -> tuple[trivy_monitor.SecuritySettings, EmailSecrets]
     finally:
         connection.close()
     data_dir = app.config["DATA_DIR"]
-    smtp_password, smtp_source = mailsecrets.effective_secret(
-        data_dir, mailsecrets.SMTP_PASSWORD, app.config.get("SMTP_PASSWORD") or ""
+    smtp_password, smtp_source = secretstore.effective_secret(
+        data_dir, secretstore.SMTP_PASSWORD, app.config.get("SMTP_PASSWORD") or ""
     )
-    m365_secret, m365_source = mailsecrets.effective_secret(
+    m365_secret, m365_source = secretstore.effective_secret(
         data_dir,
-        mailsecrets.MICROSOFT365_CLIENT_SECRET,
+        secretstore.MICROSOFT365_CLIENT_SECRET,
         app.config.get("MICROSOFT_CLIENT_SECRET") or "",
     )
     return settings, EmailSecrets(

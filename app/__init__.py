@@ -11,7 +11,7 @@ from . import auth, db
 from .config import DEFAULT_BRAND_LABEL, ensure_data_dirs, ensure_secret_key, load_config
 from .security import apply_security_headers, is_https, parse_cidrs
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 
 def create_app(config_overrides: dict | None = None) -> Flask:

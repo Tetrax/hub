@@ -34,8 +34,8 @@ La feature est **désactivée par défaut** ; l'activation depuis l'admin exige 
 jeton GitHub en lecture seule (`HUB_GITHUB_TOKEN`) et, pour les emails, un
 transport email complet — SMTP **ou** Microsoft 365 — configurable dans la
 webapp (V1.6.1, D23). Les secrets (mot de passe SMTP, secret client Microsoft
-365) vivent dans des fichiers dédiés du répertoire de données (voir
-`app/mailsecrets.py`) ; les variables d'environnement ne servent que de
+365, jeton GitHub) vivent dans des fichiers dédiés du répertoire de données (voir
+`app/secretstore.py`) ; les variables d'environnement ne servent que de
 bootstrap.
 """
 
@@ -270,8 +270,9 @@ def validate_settings(
     }
     if flags["security.sync_enabled"] and not github_token_present:
         errors.append(
-            "Surveillance impossible : le jeton GitHub (HUB_GITHUB_TOKEN, lecture seule) "
-            "n'est pas fourni au déploiement."
+            "Surveillance impossible : aucun jeton GitHub (lecture seule, portée "
+            "Actions: Read) n'est configuré — le saisir dans cette page, ou fournir "
+            "HUB_GITHUB_TOKEN au déploiement."
         )
 
     transport = (form.get("email_transport") or TRANSPORT_SMTP).strip().lower()
@@ -705,6 +706,17 @@ def _publish(connection, scan: Scan, provenance: dict, *, first: bool) -> list[d
     return events
 
 
+def effective_github_token(app) -> tuple[str, str]:
+    """Jeton GitHub effectif et provenance (administration prioritaire, env en bootstrap)."""
+    from . import secretstore
+
+    return secretstore.effective_secret(
+        app.config["DATA_DIR"],
+        secretstore.GITHUB_TOKEN,
+        app.config.get("GITHUB_TOKEN") or "",
+    )
+
+
 def sync(app, *, manual: bool = False) -> SyncResult:
     """Une synchronisation complète : téléchargement, validation, publication, email.
 
@@ -722,11 +734,14 @@ def sync(app, *, manual: bool = False) -> SyncResult:
                 ok=False,
                 message="Surveillance désactivée : activez-la dans la configuration ci-dessous.",
             )
-        token = (app.config.get("GITHUB_TOKEN") or "").strip()
+        token, _source = effective_github_token(app)
         if not token:
             return SyncResult(
                 ok=False,
-                message="Jeton GitHub absent (HUB_GITHUB_TOKEN) : synchronisation impossible.",
+                message=(
+                    "Aucun jeton GitHub configuré (lecture seule) : le saisir dans "
+                    "l'administration, ou fournir HUB_GITHUB_TOKEN au déploiement."
+                ),
             )
         try:
             with sync_lock(app.config["DATA_DIR"]):

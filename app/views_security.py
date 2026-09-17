@@ -1,11 +1,12 @@
-"""Administration — Sécurité de l'image (surveillance Trivy, V1.6.1).
+"""Administration — Sécurité de l'image (surveillance Trivy, V1.6.2).
 
 Section strictement administrateur : état du dernier scan, liste des
-vulnérabilités actionnables, configuration des alertes et du **transport email**
-(SMTP ou Microsoft 365), synchronisation manuelle et test d'envoi. Rien n'est
-exposé publiquement (voir D22) et aucun secret n'est jamais rendu au navigateur :
-l'état des secrets se limite à une provenance (« configuré (administration) »,
-« fourni au déploiement », « non configuré ») — jamais la valeur.
+vulnérabilités actionnables, configuration des alertes, du **transport email**
+(SMTP ou Microsoft 365) et du **jeton GitHub** de la surveillance,
+synchronisation manuelle et test d'envoi. Rien n'est exposé publiquement (voir
+D22) et aucun secret n'est jamais rendu au navigateur : l'état des secrets se
+limite à une provenance (« configuré (administration) », « fourni au
+déploiement », « non configuré ») — jamais la valeur.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import json
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 
-from . import auth, mailsecrets, trivy_email, trivy_monitor
+from . import auth, secretstore, trivy_email, trivy_monitor
 from .views_admin import _require_csrf, render_admin
 
 bp = Blueprint("security", __name__, url_prefix="/admin/security")
@@ -38,8 +39,8 @@ NOTIFICATION_LABELS = {
 }
 SECRET_SOURCE_LABELS = {
     "": "Non configuré",
-    mailsecrets.SOURCE_ADMIN: "Configuré (administration)",
-    mailsecrets.SOURCE_ENV: "Fourni au déploiement (variable d'environnement)",
+    secretstore.SOURCE_ADMIN: "Configuré (administration)",
+    secretstore.SOURCE_ENV: "Fourni au déploiement (variable d'environnement)",
 }
 
 
@@ -61,6 +62,7 @@ def dashboard():
     connection, settings, state = _context(current_app)
     findings = list((state or {}).get("findings") or [])
     secrets = _secrets(current_app)
+    github_token, github_token_source = trivy_monitor.effective_github_token(current_app)
     transport_complete = settings.transport_complete(
         smtp_password_present=secrets.smtp_present, m365_secret_present=secrets.m365_present
     )
@@ -78,11 +80,13 @@ def dashboard():
         next_sync=trivy_monitor.next_sync_at(state),
         findings_count=len(findings),
         events=trivy_monitor.recent_events(connection),
-        github_token_set=bool((current_app.config.get("GITHUB_TOKEN") or "").strip()),
+        github_token_set=bool(github_token),
+        github_token_source=github_token_source,
         secrets=secrets,
         secret_names={
-            "smtp": mailsecrets.SMTP_PASSWORD,
-            "m365": mailsecrets.MICROSOFT365_CLIENT_SECRET,
+            "smtp": secretstore.SMTP_PASSWORD,
+            "m365": secretstore.MICROSOFT365_CLIENT_SECRET,
+            "github": secretstore.GITHUB_TOKEN,
         },
         transport_complete=transport_complete,
         transport_label=trivy_email.transport_label(settings),
@@ -130,14 +134,15 @@ def settings_save():
     session_row = auth.require_session()
     _require_csrf(session_row)
     connection = auth.db_connection()
-    token_present = bool((current_app.config.get("GITHUB_TOKEN") or "").strip())
     secrets = _secrets(current_app)
+    github_token, _source = trivy_monitor.effective_github_token(current_app)
     # Un champ secret vide conserve le secret existant ; un champ rempli le remplace.
     new_smtp_password = request.form.get("smtp_password_new") or ""
     new_m365_secret = request.form.get("m365_client_secret_new") or ""
+    new_github_token = request.form.get("github_token_new") or ""
     values, errors = trivy_monitor.validate_settings(
         request.form,
-        github_token_present=token_present,
+        github_token_present=bool(new_github_token) or bool(github_token),
         smtp_password_present=bool(new_smtp_password) or secrets.smtp_present,
         m365_secret_present=bool(new_m365_secret) or secrets.m365_present,
     )
@@ -145,57 +150,58 @@ def settings_save():
         for message in errors:
             flash(message, "error")
         return redirect(url_for("security.dashboard"))
-    # Les secrets d'abord : si le stockage refuse, rien n'est enregistré. Les deux
-    # valeurs sont validées avant toute écriture (jamais d'état partiel).
+    # Les secrets d'abord : si le stockage refuse, rien n'est enregistré. Les
+    # valeurs sont toutes validées avant toute écriture (jamais d'état partiel).
     data_dir = current_app.config["DATA_DIR"]
     replacements = (
-        (mailsecrets.SMTP_PASSWORD, new_smtp_password, "Mot de passe SMTP"),
-        (mailsecrets.MICROSOFT365_CLIENT_SECRET, new_m365_secret, "Secret client Microsoft 365"),
+        (secretstore.SMTP_PASSWORD, new_smtp_password, "Mot de passe SMTP"),
+        (secretstore.MICROSOFT365_CLIENT_SECRET, new_m365_secret, "Secret client Microsoft 365"),
+        (secretstore.GITHUB_TOKEN, new_github_token, "Jeton GitHub"),
     )
     try:
         for _name, value, _label in replacements:
             if value:
-                mailsecrets.validate_secret(value)
-    except mailsecrets.SecretValidationError:
+                secretstore.validate_secret(value)
+    except secretstore.SecretValidationError:
         flash("Secret invalide (vide ou trop long).", "error")
         return redirect(url_for("security.dashboard"))
     for name, value, _label in replacements:
         if not value:
             continue
         try:
-            mailsecrets.write_secret(data_dir, name, value)
+            secretstore.write_secret(data_dir, name, value)
         except OSError:
             current_app.logger.error("Sécurité : stockage des secrets indisponible (%s)", name)
             flash("Stockage des secrets indisponible : secret non enregistré.", "error")
             return redirect(url_for("security.dashboard"))
     trivy_monitor.save_settings(connection, values)
-    if new_smtp_password or new_m365_secret:
-        current_app.logger.info("Sécurité : secret email remplacé depuis l'administration")
+    if new_smtp_password or new_m365_secret or new_github_token:
+        current_app.logger.info("Sécurité : secret remplacé depuis l'administration")
     current_app.logger.info("Sécurité : configuration des alertes enregistrée")
     flash("Configuration de la surveillance enregistrée.", "success")
     return redirect(url_for("security.dashboard"))
 
 
-@bp.post("/email-secret/delete")
+@bp.post("/secret/delete")
 @auth.admin_required
-def email_secret_delete():
+def secret_delete():
     session_row = auth.require_session()
     _require_csrf(session_row)
     name = (request.form.get("name") or "").strip()
-    if name not in mailsecrets.SECRET_NAMES or request.form.get("confirm_delete") != "1":
+    if name not in secretstore.SECRET_NAMES or request.form.get("confirm_delete") != "1":
         abort(403)
     data_dir = current_app.config["DATA_DIR"]
-    removed = mailsecrets.delete_secret(data_dir, name)
-    current_app.logger.info("Sécurité : secret email supprimé (%s : %s)", name, "oui" if removed else "absent")
+    removed = secretstore.delete_secret(data_dir, name)
+    current_app.logger.info("Sécurité : secret supprimé (%s : %s)", name, "oui" if removed else "absent")
     if not removed:
         flash("Aucun secret enregistré à supprimer.", "error")
         return redirect(url_for("security.dashboard"))
-    environment = (
-        current_app.config.get("SMTP_PASSWORD")
-        if name == mailsecrets.SMTP_PASSWORD
-        else current_app.config.get("MICROSOFT_CLIENT_SECRET")
-    )
-    if mailsecrets.status(data_dir, name, environment or ""):
+    environments = {
+        secretstore.SMTP_PASSWORD: current_app.config.get("SMTP_PASSWORD") or "",
+        secretstore.MICROSOFT365_CLIENT_SECRET: current_app.config.get("MICROSOFT_CLIENT_SECRET") or "",
+        secretstore.GITHUB_TOKEN: current_app.config.get("GITHUB_TOKEN") or "",
+    }
+    if secretstore.status(data_dir, name, environments.get(name, "")):
         flash(
             "Secret supprimé — le secret fourni au déploiement (variable "
             "d'environnement) redevient actif.",

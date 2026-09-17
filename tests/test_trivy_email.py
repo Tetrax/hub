@@ -15,7 +15,7 @@ import threading
 
 import pytest
 
-from app import db, graphmail, mailsecrets, trivy_email, trivy_monitor
+from app import db, graphmail, secretstore, trivy_email, trivy_monitor
 from app.trivy import Scan
 
 
@@ -360,8 +360,8 @@ def test_a_secret_stored_in_the_data_directory_authenticates(app, smtp_server):
     server = smtp_server(advertise_auth=True)
     configure(app, server, username="hub")
     app.config["SMTP_PASSWORD"] = ""
-    mailsecrets.write_secret(
-        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    secretstore.write_secret(
+        app.config["DATA_DIR"], secretstore.SMTP_PASSWORD, "secret-administre"
     )
     ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
     assert ok, detail
@@ -374,8 +374,8 @@ def test_the_administrative_secret_wins_over_the_environment(app, smtp_server):
     server = smtp_server(advertise_auth=True)
     configure(app, server, username="hub")
     app.config["SMTP_PASSWORD"] = "secret-d-environnement"
-    mailsecrets.write_secret(
-        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    secretstore.write_secret(
+        app.config["DATA_DIR"], secretstore.SMTP_PASSWORD, "secret-administre"
     )
     ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
     assert ok, detail
@@ -388,10 +388,10 @@ def test_deleting_the_administrative_secret_falls_back_to_the_environment(app, s
     server = smtp_server(advertise_auth=True)
     configure(app, server, username="hub")
     app.config["SMTP_PASSWORD"] = "secret-d-environnement"
-    mailsecrets.write_secret(
-        app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD, "secret-administre"
+    secretstore.write_secret(
+        app.config["DATA_DIR"], secretstore.SMTP_PASSWORD, "secret-administre"
     )
-    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.SMTP_PASSWORD)
+    secretstore.delete_secret(app.config["DATA_DIR"], secretstore.SMTP_PASSWORD)
     ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)
     assert ok, detail
     payload = base64.b64decode(server.auth_attempts[0].split()[-1])
@@ -437,8 +437,8 @@ def configure_m365(app, *, secret="secret-client-microsoft-365", notifications=T
     trivy_monitor.save_settings(connection, values)
     connection.close()
     if secret:
-        mailsecrets.write_secret(
-            app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET, secret
+        secretstore.write_secret(
+            app.config["DATA_DIR"], secretstore.MICROSOFT365_CLIENT_SECRET, secret
         )
 
 
@@ -480,7 +480,7 @@ def test_an_incomplete_microsoft365_transport_refuses_without_sending(app, monke
     from test_graph_email import FakeOpener
 
     configure_m365(app)
-    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET)
+    secretstore.delete_secret(app.config["DATA_DIR"], secretstore.MICROSOFT365_CLIENT_SECRET)
     fake = FakeOpener()
     monkeypatch.setattr(graphmail, "_urlopen", fake)
     ok, detail = trivy_email.send_delta_email(app, EVENTS, SCAN)

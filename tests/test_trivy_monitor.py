@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from app import db, graphmail, mailsecrets, trivy_email, trivy_github, trivy_monitor
+from app import db, graphmail, secretstore, trivy_email, trivy_github, trivy_monitor
 
 COMMIT_A = "a" * 40
 COMMIT_B = "b" * 40
@@ -419,7 +419,7 @@ def test_disabled_monitoring_or_missing_token_refuses_cleanly(app, monkeypatch):
     enable(app)
     app.config["GITHUB_TOKEN"] = ""
     result = trivy_monitor.sync(app)
-    assert not result.ok and "Jeton GitHub" in result.message
+    assert not result.ok and "jeton GitHub" in result.message
     assert emails == []
 
 
@@ -605,8 +605,8 @@ def test_a_delta_email_can_use_the_microsoft365_transport(app, monkeypatch):
         m365_mailbox="hub@example.com",
         m365_display_name="SNS Hub",
     )
-    mailsecrets.write_secret(
-        app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET, "secret-m365"
+    secretstore.write_secret(
+        app.config["DATA_DIR"], secretstore.MICROSOFT365_CLIENT_SECRET, "secret-m365"
     )
     fake = FakeOpener(token_response(), FakeResponse(202, b""))
     monkeypatch.setattr(graphmail, "_urlopen", fake)
@@ -634,7 +634,7 @@ def test_an_incomplete_transport_never_breaks_the_ingestion(app, monkeypatch):
         m365_mailbox="hub@example.com",
     )
     # Le secret est supprimé après coup : notifications activées, transport incomplet.
-    mailsecrets.delete_secret(app.config["DATA_DIR"], mailsecrets.MICROSOFT365_CLIENT_SECRET)
+    secretstore.delete_secret(app.config["DATA_DIR"], secretstore.MICROSOFT365_CLIENT_SECRET)
     use_github(monkeypatch, payload(BASELINE))
     trivy_monitor.sync(app)
 
