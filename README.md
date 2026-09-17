@@ -69,14 +69,17 @@ aucune requête vers elles.
   (aucun clignotement) ; recherche et filtres de catégories sont strictement
   identiques dans les deux vues (un seul moteur, sans JavaScript la vue Cartes
   reste le comportement par défaut).
-- **Transport email administrable (V1.6.1)** : depuis *Administration →
-  Sécurité*, choisir **SMTP** ou **Microsoft 365** (Microsoft Graph), saisir les
-  paramètres puis **tester l'envoi** réel — sans redémarrage, sans redéploiement
-  et sans variable Portainer. Les secrets (mot de passe SMTP, secret client
-  Microsoft 365) sont stockés hors base, dans un stockage dédié du répertoire de
-  données (fichiers 0600), ne sont jamais réaffichés (état « configuré / non
-  configuré »), se remplacent ou se suppriment explicitement, et les alertes
-  Trivy utilisent le transport sélectionné.
+- **Transport email administrable (V1.6.1) et secrets administrables (V1.6.2)** :
+  depuis *Administration → Sécurité*, choisir **SMTP** ou **Microsoft 365**
+  (Microsoft Graph), saisir les paramètres puis **tester l'envoi** réel — sans
+  redémarrage, sans redéploiement et sans variable Portainer. Les secrets
+  (jeton GitHub de la surveillance, mot de passe SMTP, secret client Microsoft
+  365) sont stockés hors base, dans un stockage dédié du répertoire de données
+  (fichiers 0600), ne sont jamais réaffichés (état « configuré / non
+  configuré »), se remplacent ou se suppriment explicitement ; les variables
+  d'environnement ne servent que de **bootstrap** (le secret administré est
+  toujours prioritaire). La surveillance Trivy s'active ainsi **entièrement
+  depuis la webapp** et ses alertes utilisent le transport sélectionné.
 
 ## Architecture
 
@@ -151,14 +154,14 @@ ne scanne rien, n'inspecte pas Docker et ne lance aucun Trivy. Depuis
 
 La synchronisation est **interne** (une fois par heure au plus, verrou
 inter-process ; aucun service ni conteneur supplémentaire, y compris en
-standalone) et **désactivée par défaut**. Pour l'activer : `HUB_GITHUB_TOKEN`
-en lecture seule (portée `Actions: Read`) — obligatoire, le téléchargement
+standalone) et **désactivée par défaut**. Pour l'activer : un **jeton GitHub en
+lecture seule** (portée `Actions: Read`) — obligatoire, le téléchargement
 d'artefact l'exige même pour un dépôt public — et un **transport email
-complet**, configuré dans l'admin (`/admin/security`) : SMTP ou Microsoft 365,
-avec un test d'envoi. Les secrets peuvent aussi venir du déploiement
-(`HUB_SMTP_PASSWORD`, `HUB_MICROSOFT_CLIENT_SECRET`) comme simple **bootstrap** :
-un secret enregistré dans la webapp est toujours prioritaire. Détails :
-`docs/operations.md` §16, décisions D22 et D23.
+complet**, le tout **configuré dans l'admin** (`/admin/security`). Les secrets
+peuvent aussi venir du déploiement (`HUB_GITHUB_TOKEN`, `HUB_SMTP_PASSWORD`,
+`HUB_MICROSOFT_CLIENT_SECRET`) comme simple **bootstrap** : un secret enregistré
+dans la webapp est toujours prioritaire. Détails : `docs/operations.md` §16,
+décisions D22 à D24.
 
 ## Déploiement
 

@@ -9,8 +9,11 @@ reconstituer l'historique.
 SNS Hub est le **point d'entrée unique des applications internes SNS** :
 une landing page qui présente les applications et une administration
 (`/admin`) qui gère le catalogue, les screenshots, le certificat TLS du Hub,
-et — depuis la V1.6/V1.6.1 — la **surveillance de l'image** (rapport Trivy de la
-CI) avec ses **alertes email** (transport SMTP ou Microsoft 365 configurable).
+et — depuis la V1.6/V1.6.2 — la **surveillance de l'image** (rapport Trivy de la
+CI) avec ses **alertes email** (transport SMTP ou Microsoft 365 configurable) et
+ses **secrets administrables** (jeton GitHub, mot de passe SMTP, secret client
+Microsoft 365 — saisis dans la webapp, l'environnement ne servant que de
+bootstrap).
 C'est un **launcher, pas un proxy** : il n'exécute, ne proxifie, ne surveille
 aucune application référencée.
 
@@ -64,7 +67,7 @@ Détails : `docs/architecture.md`.
 | Contrôle de sécurité de l'image (CI) | `.github/workflows/ci.yml` (Trivy, informatif) + `scripts/trivy_report.py` (résumé) |
 | Surveillance de l'image (Trivy → Hub) | `app/trivy_monitor.py` (état, baseline, delta, verrou) + `app/trivy.py` (validation) + `app/trivy_github.py` (API GitHub) + `app/trivy_scheduler.py` |
 | Transport email (SMTP / Microsoft 365) | `app/trivy_email.py` (point d'envoi unique + composition) + `app/graphmail.py` (Graph, client credentials) |
-| Secrets email (stockage, provenance) | `app/mailsecrets.py` (fichiers 0600 du répertoire de données ; admin prioritaire, env en bootstrap) |
+| Secrets administrables (stockage, provenance) | `app/secretstore.py` (fichiers 0600 du répertoire de données ; admin prioritaire, env en bootstrap) : jeton GitHub, mot de passe SMTP, secret client Microsoft 365 |
 | Section admin Sécurité / Alertes | `app/views_security.py` + `app/templates/admin/security.html` |
 | Screenshots (validation, stockage) | `app/uploads.py` (magic bytes, noms uuid) |
 | Authentification admin | `app/auth.py` (scrypt, sessions SQLite, CSRF, verrouillage) |
@@ -89,7 +92,7 @@ directement dans `/var/lib/hub/certificates/active`).
   `hub.sqlite` (catalogue, catégories, sessions, admin, verrouillages, réglages
   de la surveillance et transport email non sensible),
   `uploads/` (screenshots, noms `uuid.webp|png|jpg`),
-  `secrets/` (secrets email administrés : `smtp-password`,
+  `secrets/` (secrets administrés : `github-token`, `smtp-password`,
   `microsoft365-client-secret` — répertoire 0700, fichiers 0600, écriture
   atomique, jamais en base ni rendus),
   `.secret_key` (signature des sessions, 0600) ;
@@ -152,17 +155,17 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 559 tests pytest (validation d'entrées, uploads, auth, CRUD,
+- `tests/` : 571 tests pytest (validation d'entrées, uploads, auth, CRUD,
   catégories, migration, thème, branding (`HUB_BRAND_LABEL`), vues du catalogue
   (Cartes/Liste), bundles PKCS#12/PFX et DER, landing, sécurité,
   certificats/rollback, intégration app ↔ helper par socket, configuration de
   déploiement : Compose générique/surcharge, durcissement systemd, portabilité,
   rendu du rapport Trivy et invariants de la CI, surveillance Trivy
-  (baseline/delta/pannes), **transport email V1.6.1** : stockage des secrets
-  (`test_mailsecrets.py`), Microsoft Graph simulé (`test_graph_email.py`),
-  SMTP réel factice + bascule de transport (`test_trivy_email.py`), UI et CSRF
-  de la section Sécurité (`test_security_admin.py`), migration V1.6
-  (`test_trivy_monitor.py`)).
+  (baseline/delta/pannes), **secrets administrables et transport email
+  (V1.6.1/V1.6.2)** : stockage des secrets (`test_secretstore.py`), Microsoft
+  Graph simulé (`test_graph_email.py`), SMTP réel factice + bascule de transport
+  (`test_trivy_email.py`), UI, CSRF et jeton GitHub (`test_security_admin.py`),
+  migration V1.6 et résolution du jeton (`test_trivy_monitor.py`)).
 - `.github/workflows/ci.yml` : job `tests` (pytest, bloquant) puis job
   `security-scan` (Trivy **informatif** sur l'image réelle — HIGH/CRITICAL
   corrigibles, artefact `trivy-report`, scan quotidien de `main` à 05:23 UTC,
@@ -195,11 +198,13 @@ docker compose exec web python -m app.manage reset-admin
 - Clé privée : jamais dans Git/l'image/les logs/réponses HTTP ; 0600 root sur le
   VPS, 0600 utilisateur applicatif dans `hub_certs` en standalone ; jamais
   exposée hors du volume
-- Secrets email (mot de passe SMTP, secret client Microsoft 365) : jamais en
-  base, jamais dans une réponse HTTP (provenance affichée seulement), jamais
-  dans un log ni un traceback ; fichiers 0600 dans `secrets/` du répertoire de
-  données ; le secret administré est prioritaire, l'environnement n'est qu'un
-  bootstrap — ne jamais copier un secret d'une source vers l'autre.
+- Secrets administrables (jeton GitHub, mot de passe SMTP, secret client
+  Microsoft 365) : jamais en base, jamais dans une réponse HTTP (provenance
+  affichée seulement), jamais dans un log ni un traceback ; fichiers 0600 dans
+  `secrets/` du répertoire de données ; le secret administré est prioritaire,
+  l'environnement (`HUB_GITHUB_TOKEN`, `HUB_SMTP_PASSWORD`,
+  `HUB_MICROSOFT_CLIENT_SECRET`) n'est qu'un bootstrap — ne jamais copier un
+  secret d'une source vers l'autre.
 - Aucune requête serveur vers les URLs du catalogue (pas de SSRF). L'hôte SMTP
   configurable est le seul appel sortant piloté par l'admin : nom d'hôte
   uniquement (jamais une URL), port borné ; les endpoints Graph sont figés.

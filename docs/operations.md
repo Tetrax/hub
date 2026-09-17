@@ -683,12 +683,15 @@ La fonction est **désactivée par défaut** et se configure dans
 
 ### 16.2 Activer
 
-1. **Jeton GitHub** (déploiement) : fine-grained PAT sur `Tetrax/hub`, portée
+1. **Jeton GitHub** : fine-grained PAT sur `Tetrax/hub`, portée
    **`Actions: Read`** uniquement (aucun droit d'écriture ; `Contents: Read` n'est
    pas nécessaire). Vérifié le 2026-09-17 : l'artefact exige une authentification
-   même sur un dépôt public.
-   - VPS : `HUB_GITHUB_TOKEN` dans `.env` puis redéploiement/recréation.
-   - Portainer : `HUB_GITHUB_TOKEN` dans les *Environment variables* de la stack.
+   même sur un dépôt public. Depuis la V1.6.2, il se **saisit dans
+   `/admin/security`** (champ « Jeton GitHub », write-only, remplaçable et
+   supprimable) — c'est le chemin normal. Le fournir au déploiement
+   (`HUB_GITHUB_TOKEN` dans `.env` ou les *Environment variables* Portainer)
+   reste possible comme **bootstrap** : il n'est utilisé que tant qu'aucun jeton
+   administré n'existe (la provenance affichée le dit).
 2. **Transport email** (si les emails sont voulus) — **entièrement dans
    l'admin**, aucun passage par Portainer (V1.6.1, D23) :
    - ouvrir `/admin/security`, section **Transport email** ;
@@ -764,10 +767,11 @@ d'architecture.
 - **Changer de transport** : basculer le bouton SMTP ⇄ Microsoft 365 et
   enregistrer — prise en compte **immédiate** (aucun redémarrage). Les
   paramètres de l'autre transport restent conservés pour un retour arrière.
-- **Remplacer / supprimer un secret** : champ « nouveau secret » (vide =
-  conservé) ou bouton **Supprimer le secret** (confirmation) dans
-  `/admin/security`. Supprimer un secret administré alors qu'une variable de
-  déploiement existe ré-active cette variable (la provenance affichée le dit).
+- **Remplacer / supprimer un secret** (jeton GitHub, mot de passe SMTP, secret
+  client Microsoft 365) : champ « nouveau secret » (vide = conservé) ou bouton
+  **Supprimer le secret** (confirmation) dans `/admin/security`. Supprimer un
+  secret administré alors qu'une variable de déploiement existe ré-active cette
+  variable (la provenance affichée le dit).
 - **Réinitialiser la baseline** (nouveau départ volontaire) :
   `docker compose exec web python -m app.manage` n'est pas nécessaire :
   `docker exec hub-web python -c "import sqlite3,os;c=sqlite3.connect(os.environ.get('HUB_DATA_DIR','/data')+'/hub.sqlite');c.execute('DELETE FROM security_state');c.execute('DELETE FROM security_events');c.commit()"`

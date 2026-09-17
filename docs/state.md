@@ -1,11 +1,12 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.6.1 livrée — transport email administrable (SMTP ou Microsoft 365
-configurable dans `/admin/security`, secrets hors base, test d'envoi)**, en plus
-de la surveillance Trivy (ingestion de l'artefact CI, baseline/delta, alertes sur
-changement), du branding configurable, de la vue Liste et du contrôle Trivy en
-CI ; aucune action ouverte.
+Statut : **V1.6.2 livrée — secrets administrables (jeton GitHub, mot de passe
+SMTP, secret client Microsoft 365 : saisis dans `/admin/security`, stockés hors
+base, environnement en bootstrap) et transport email SMTP/Microsoft 365**, en
+plus de la surveillance Trivy (ingestion de l'artefact CI, baseline/delta,
+alertes sur changement), du branding configurable, de la vue Liste et du
+contrôle Trivy en CI ; aucune action ouverte.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -14,13 +15,22 @@ CI ; aucune action ouverte.
 
 ## Version et périmètre
 
+- **V1.6.2 (2026-09-17)** : **jeton GitHub administrable** — la surveillance
+  s'active **entièrement depuis la webapp** : le jeton (fine-grained PAT,
+  lecture seule `Actions: Read`) se saisit dans `/admin/security`, se remplace
+  (champ vide = conservé) et se supprime explicitement (confirmation + CSRF),
+  avec provenance affichée. Chaîne de priorité identique aux autres secrets :
+  **jeton administré → `HUB_GITHUB_TOKEN` → non configuré** ; le jeton vit dans
+  `secrets/github-token` (0600, hors base, jamais rendu ni journalisé). Le module
+  de stockage devient `app/secretstore.py` (secrets email **et** jeton) et
+  l'endpoint de suppression `/admin/security/secret/delete` couvre les trois
+  secrets. Portée du jeton inchangée (voir D24, exploitation §16).
 - **V1.6.1 (2026-09-17)** : **transport email administrable** — le choix
   **SMTP** ou **Microsoft 365 (Graph)** se fait dans `/admin/security`, avec les
   paramètres saisis dans la webapp, un **test d'envoi** réel et une prise en
   compte immédiate (aucun redémarrage, aucune variable Portainer). Les secrets
-  (mot de passe SMTP, secret client Microsoft 365) sont stockés **hors base**
-  dans `secrets/` du répertoire de données (0600), jamais réaffichés (provenance
-  seulement), remplaçables et supprimables explicitement ; les variables
+  email sont stockés **hors base** dans `secrets/` du répertoire de données
+  (0600), jamais réaffichés (provenance seulement) ; les variables
   `HUB_SMTP_PASSWORD` / `HUB_MICROSOFT_CLIENT_SECRET` ne servent que de
   bootstrap (l'admin est prioritaire). Les alertes Trivy utilisent le transport
   sélectionné ; migration V1.6 → V1.6.1 purement additive (voir D23,
@@ -127,11 +137,13 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   delta (apparitions, disparitions, changements de sévérité) ; **un seul email
   par synchronisation, uniquement en cas de changement** ; synchronisation
   interne horaire (thread + verrou inter-process, standalone inchangé) ;
-  **désactivée par défaut** (nécessite `HUB_GITHUB_TOKEN` en lecture seule et un
-  transport email complet). **Transport email (V1.6.1)** : SMTP ou Microsoft 365
-  (Graph, `Mail.Send`), configurable dans l'admin avec test d'envoi ; secrets
-  dans `runtime/data/secrets/` (0600, hors base, provenance affichée,
-  `HUB_SMTP_PASSWORD`/`HUB_MICROSOFT_CLIENT_SECRET` en bootstrap seulement).
+  **désactivée par défaut** (nécessite un jeton GitHub en lecture seule et un
+  transport email complet). **Secrets administrables (V1.6.1/V1.6.2)** : jeton
+  GitHub, mot de passe SMTP et secret client Microsoft 365 se saisissent dans
+  l'admin (test d'envoi pour l'email) ; stockage dans `runtime/data/secrets/`
+  (0600, hors base, provenance affichée), variables `HUB_GITHUB_TOKEN` /
+  `HUB_SMTP_PASSWORD` / `HUB_MICROSOFT_CLIENT_SECRET` en **bootstrap seulement**
+  — la surveillance s'active donc entièrement depuis la webapp.
   État au 2026-09-17 : validée en réel sur le run CI `35253281173` (baseline
   3 CRITICAL / 10 HIGH, idempotence vérifiée) ; transport V1.6.1 vérifié sur
   instance locale (SMTP réel factice + Microsoft 365 simulé) et en production

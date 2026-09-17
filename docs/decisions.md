@@ -804,3 +804,50 @@ email. Les sauvegardes contiennent désormais des secrets email : elles restent 
 base V1.6 dans un Hub V1.6.1 est directe (clés additives) ; l'inverse exige de
 revenir à l'image V1.6 **et** de ne pas compter sur les clés inconnues (elles
 sont ignorées, aucun secret n'y transite).
+
+## D24 — Jeton GitHub administrable : la surveillance s'active depuis la webapp (V1.6.2)
+
+**Contexte.** D23 rendait administrables les secrets email, mais le jeton GitHub
+de la surveillance restait un secret de déploiement (`HUB_GITHUB_TOKEN` dans
+`.env` ou Portainer) : activer la surveillance exigeait encore un passage par le
+déploiement, alors que le bouton et la configuration vivent déjà dans
+`/admin/security`. Le besoin exprimé est la même chaîne que pour les autres
+secrets : **secret administré prioritaire, sinon variable d'environnement, sinon
+non configuré**.
+
+**Décision.**
+
+- Le jeton GitHub rejoint les secrets administrables de `app/secretstore.py`
+  (module renommé depuis `app/mailsecrets.py`, sa portée couvrant désormais les
+  secrets email **et** le jeton) : fichier `secrets/github-token` (répertoire
+  0700, fichier 0600, écriture atomique, refus des liens), jamais en base,
+  jamais rendu (provenance seulement), remplaçable (champ vide = conservé) et
+  supprimable explicitement (confirmation + `confirm_delete` + CSRF).
+- **Priorité** : jeton administré → `HUB_GITHUB_TOKEN` → non configuré. La
+  synchronisation et la validation d'activation lisent le **jeton effectif**
+  (`trivy_monitor.effective_github_token`) ; supprimer un jeton administré
+  ré-expose la variable de déploiement (signalé à l'opérateur).
+- **Portée inchangée** : le jeton reste un *fine-grained PAT* en **lecture
+  seule** (`Actions: Read`) — c'est ce que le téléchargement d'artefact exige,
+  même pour un dépôt public (vérifié en D22). L'administration ne fait que
+  déplacer le stockage, pas les droits.
+- L'activation de la surveillance devient **entièrement possible depuis la
+  webapp** (jeton + transport email + commutateurs) ; aucune variable de
+  déploiement n'est nécessaire pour l'usage normal.
+- L'endpoint de suppression devient `/admin/security/secret/delete` (il ne
+  concerne plus seulement les secrets email) ; la whitelist `SECRET_NAMES` est
+  la seule autorité sur les noms acceptés.
+
+**Alternatives.** Rester en variable d'environnement uniquement : rejeté — c'est
+précisément la friction à supprimer (rotation = redéploiement). Jeton en base :
+rejeté, comme en D23 (même raison : clé de chiffrement à côté du chiffré, aucun
+gain face à un fichier 0600 déjà restreint au conteneur). GitHub App avec clé
+privée + installation token : rejeté — plus sûr en théorie, mais un mécanisme de
+plus à administrer pour un besoin non démontré. Permissions élargies : rejeté —
+aucun besoin, la lecture seule suffit.
+
+**Conséquences.** Rotation du jeton sans redéploiement ; la sauvegarde couvre le
+jeton (archive 0600, même sensibilité que la clé de session) ; le standalone
+s'active sans aucune variable. Le point de D22 « jeton stocké en base : rejeté »
+reste vrai (rien en base) ; son point « secrets côté déploiement uniquement »
+est remplacé par D23 (secrets email) et la présente décision (jeton GitHub).
