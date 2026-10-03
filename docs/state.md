@@ -1,12 +1,19 @@
 # SNS Hub — État du projet
 
-Dernière mise à jour : 2026-09-17 (UTC)
-Statut : **V1.6.2 livrée — secrets administrables (jeton GitHub, mot de passe
-SMTP, secret client Microsoft 365 : saisis dans `/admin/security`, stockés hors
-base, environnement en bootstrap) et transport email SMTP/Microsoft 365**, en
-plus de la surveillance Trivy (ingestion de l'artefact CI, baseline/delta,
-alertes sur changement), du branding configurable, de la vue Liste et du
-contrôle Trivy en CI ; aucune action ouverte.
+Dernière mise à jour : 2026-10-03 (UTC)
+Statut : **V1.7.0 candidate — validée localement, revue indépendante à faire**
+(rôles fixes principal/modérateur, gestion des comptes par le principal,
+permissions serveur, révocation des sessions). Branche `wt/t_9ddd4150`, carte
+`t_9ddd4150` : **602 tests pytest réussis** après les derniers correctifs ; build
+Docker `hub:t_9ddd4150-check322` réussi ; recette Chromium complète sur instance
+HTTP isolée : **95/95 vérifications réussies**, dont le parcours modérateur et
+le correctif mobile, avec deux exclusions attendues (captures préexistantes
+absentes, activation TLS non configurée). PR/CI exacte et revue indépendante
+restent à attester dans le handoff de la carte. La base candidate passe en
+schéma v4 à sa première exécution. Mise à jour d'`AGENTS.md` différée faute
+d'approbation : fichier laissé intact.
+**La production reste V1.6.2, inchangée** : aucun merge ni déploiement pendant
+la phase Builder, puis intégration par l'Orchestrateur après PASS indépendant.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -15,6 +22,19 @@ contrôle Trivy en CI ; aucune action ouverte.
 
 ## Version et périmètre
 
+- **V1.7 (2026-10-02, candidate)** : **comptes modérateurs** — l'administrateur
+  principal crée des comptes nominatifs (`/admin/accounts`) qui gèrent tout le
+  catalogue (applications, captures, catégories, ordre, visibilité) mais
+  n'accèdent ni aux certificats, ni à la sécurité/alertes/secrets, ni aux
+  préférences globales, ni aux comptes. Deux rôles fixes (`admin` unique,
+  `moderator`), sessions liées à une identité stable (`sessions.user_id`) avec
+  contrôle actif/rôle côté serveur à chaque requête, révocation immédiate sur
+  désactivation/suppression/réinitialisation/changement de mot de passe, chacun
+  change son propre mot de passe. Migration v3 → v4 idempotente et
+  transactionnelle préservant identifiant/hash du compte principal, catalogue,
+  uploads, paramètres et état Trivy ; procédure de rollback dans
+  `operations.md` §17 (invalidation obligatoire de toutes les sessions avant
+  une image antérieure). Voir D25.
 - **V1.6.2 (2026-09-17)** : **jeton GitHub administrable** — la surveillance
   s'active **entièrement depuis la webapp** : le jeton (fine-grained PAT,
   lecture seule `Actions: Read`) se saisit dans `/admin/security`, se remplace
@@ -148,11 +168,18 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   3 CRITICAL / 10 HIGH, idempotence vérifiée) ; transport V1.6.1 vérifié sur
   instance locale (SMTP réel factice + Microsoft 365 simulé) et en production
   après déploiement.
-- **Administration** : compte unique créé au premier accès (`/admin/setup`),
-  sessions serveur, CSRF, verrouillage après échecs.
-- **Migration de base** : schéma en `user_version = 3` (migration V1.1 appliquée
-  en production le 2026-09-16, sauvegarde préalable conservée ; V1.6 ajoute les
-  tables `security_state`/`security_events`, additives).
+- **Administration** : compte principal créé au premier accès (`/admin/setup`,
+  unique, non supprimable, non désactivable) et **comptes modérateurs** créés
+  depuis `/admin/accounts` (V1.7, D25) ; sessions serveur liées au compte,
+  CSRF, verrouillage après échecs, refus 403 des surfaces sensibles aux
+  modérateurs.
+- **Migration de base** : la candidate V1.7 porte le schéma en
+  `user_version = 4` (migration v3 → v4 additive et transactionnelle :
+  `admin_users.role` + `is_active`, `sessions.user_id` — procédure
+  `operations.md` §5, rollback §17). La production 1.6.2 tourne encore sur le
+  schéma v3 (migration V1.1 appliquée le 2026-09-16, sauvegarde préalable
+  conservée ; V1.6 a ajouté les tables `security_state`/`security_events`,
+  additives).
 
 ### Certificat TLS en production (V1.2)
 
@@ -190,10 +217,19 @@ sans Nginx, dans un bac à sable `/tmp`).
 
 1. `sudo ./scripts/backup.sh` puis inspecter la destination (`HUB_BACKUP_DIR` du
    `.env`, `/home/tetrax/backups/hub` sur le VPS).
-2. Redéployer un commit connu : `git checkout <sha> && ./scripts/deploy.sh`
-   (l'image `hub:previous` conserve la version précédente).
-3. Base : restaurer `hub.sqlite` depuis une archive (voir `operations.md` §8) ;
-   le conteneur applique les migrations manquantes à son démarrage.
+2. **Si le retour traverse V1.7**, suivre `operations.md` §17 avant toute
+   sélection d'une ancienne image : **arrêter tous les serveurs/writers**,
+   puis révoquer toutes les sessions hors ligne avec l'image explicitement
+   sélectionnée : `HUB_IMAGE_TAG=<SHA_V1_7> docker compose run --rm --no-deps
+   -e HUB_TRIVY_SCHEDULER=0 web python -m app.manage invalidate-sessions`.
+   Ne pas redémarrer V1.7 entre cette invalidation et le rollback. Une ancienne
+   image accepterait sinon toute session valide comme administrateur principal.
+3. **Base migrée depuis v3** : sélectionner l'image connue avec
+   `HUB_IMAGE_TAG=<SHA_ANCIEN> HUB_GIT_SHA=<SHA_ANCIEN> docker compose up -d --no-build`
+   (`hub:previous` conserve l'image précédente). **Base neuve v4** : restaurer
+   une sauvegarde v3 compatible et invalider aussi ses sessions hors ligne
+   selon §17, ou rester en V1.7 ; ne pas lancer l'ancienne image sur une base
+   neuve v4. Toute restauration de `hub.sqlite` se fait service arrêté (§8).
 4. Certificat : `/admin/certificats` (remplacement manuel) ou hook Certbot
    (`certbot renew --dry-run` pour tester).
 

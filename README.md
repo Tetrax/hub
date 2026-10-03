@@ -22,6 +22,11 @@ aucune requête vers elles.
 - Administration : CRUD des applications, ordre d'affichage, masquage immédiat,
   téléversement de screenshots (PNG/JPEG/WebP, validés par magic bytes),
   paramètres du portail, rotation du mot de passe.
+- **Comptes modérateurs (V1.7)** : le principal crée des comptes nominatifs qui
+  gèrent le catalogue complet, mais pas les comptes, certificats, secrets ou
+  préférences globales. Désactivation, suppression et reset révoquent leurs
+  sessions ; chacun change son propre mot de passe. Migration automatique
+  préservant le principal ; rollback sécurisé : `docs/operations.md` §17.
 - Catégories administrables (V1.1) : entité en base avec usage, ordre d'affichage,
   renommage, création rapide depuis le formulaire d'une application et
   suppression sûre (réassignation obligatoire ; repli « Autres » protégé). Les

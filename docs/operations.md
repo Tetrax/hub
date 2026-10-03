@@ -46,8 +46,19 @@ commit. Trace : `Git SHA → tag d'image → label OCI → conteneur`.
 
 ### Déployer une image précise (retour arrière)
 
+> **Avant un retour arrière traversant V1.7, suivre impérativement le §17.**
+> Une image antérieure à V1.7 accepterait **toute session valide comme
+> administrateur principal**. Arrêter tous les serveurs/writers, puis révoquer
+> toutes les sessions **hors ligne**, en sélectionnant explicitement l'image
+> V1.7 : `HUB_IMAGE_TAG=<SHA_V1_7> docker compose run --rm --no-deps -e
+> HUB_TRIVY_SCHEDULER=0 web python -m app.manage invalidate-sessions`.
+> Ne pas redémarrer V1.7 avant le retour arrière. Seule une base migrée depuis
+> v3 est compatible ; une base neuve v4 exige une sauvegarde v3 compatible.
+
+Une fois ces prérequis satisfaits, sélectionner l'ancienne image :
+
 ```bash
-HUB_IMAGE_TAG=<ancien SHA> HUB_GIT_SHA=<ancien SHA> docker compose up -d --no-build
+HUB_IMAGE_TAG=<SHA_ANCIEN> HUB_GIT_SHA=<SHA_ANCIEN> docker compose up -d --no-build
 ```
 
 L'image précédente est conservée sous `hub:previous` par `scripts/build.sh` ;
@@ -66,19 +77,28 @@ systemctl status hub-cert-helper --no-pager
 journalctl -u hub-cert-helper -n 50 --no-pager
 ```
 
-## 2. Compte administrateur
+## 2. Comptes : administrateur principal et modérateurs
 
 - **Première configuration** : ouvrir `https://hub.valdev.me/admin` depuis une
-  IP autorisée ; tant qu'aucun compte n'existe, la page crée le compte (aucun
-  mot de passe par défaut, minimum 12 octets).
+  IP autorisée ; tant qu'aucun compte n'existe, la page crée le **compte
+  principal** (aucun mot de passe par défaut, minimum 12 octets).
+- **Administrateur principal** (rôle `admin`, id = 1) : unique, non supprimable,
+  non désactivable, non rétrogradable ; il gère tout — comptes modérateurs,
+  certificats, sécurité/alertes/secrets, préférences du portail.
+- **Comptes modérateurs** (rôle `moderator`) : créés, désactivés/réactivés,
+  supprimés et réinitialisés par le principal dans `/admin/accounts` ; ils
+  gèrent le catalogue (applications, captures, catégories, ordre, visibilité) et
+  les surfaces sensibles leur répondent 403 (voir §17).
 - **Mot de passe perdu / rotation d'urgence** (interactif, jamais en argument) :
 
 ```bash
 docker compose exec web python -m app.manage reset-admin
 ```
 
-  Toutes les sessions actives sont invalidées par cette commande.
-- **Changement courant** : `/admin/paramètres` (exige le mot de passe actuel).
+  Cible le compte principal ; toutes les sessions actives sont invalidées par
+  cette commande.
+- **Changement courant** : `/admin/paramètres` (exige le mot de passe actuel) ;
+  chaque compte ne révoque que ses propres sessions.
 
 ## 3. Catalogue et screenshots
 
@@ -118,6 +138,11 @@ démarrage du conteneur (`db.init_db`) :
 
 - migration `1 → 2` (V1.1) : `apps.category` (texte) → `categories` +
   `apps.category_id` (clé étrangère `NOT NULL`) ;
+- migration `3 → 4` (V1.7) : `admin_users` gagne `role` (`admin` /
+  `moderator`) et `is_active`, `sessions` gagne `user_id` (indexé). Identifiant,
+  hash et horodatages du compte principal sont recopiés à l'identique ; les
+  sessions antérieures (qui ne peuvent appartenir qu'au principal) lui sont
+  rattachées ;
 - transactionnelle (aucun état partiel), idempotente (relançable sans effet) et
   sans perte : identifiants, slugs, images, positions, visibilité et statuts des
   applications sont conservés ; les variantes de casse/espaces sont fusionnées.
@@ -783,3 +808,66 @@ d'architecture.
 - **Planification** : interne à l'application (thread + verrou inter-process),
   désactivable par `HUB_TRIVY_SCHEDULER=0` (voir §3) ; aucun timer systemd, aucun
   service supplémentaire en standalone.
+
+## 17. Comptes modérateurs (V1.7)
+
+### Gérer les comptes — administrateur principal uniquement
+
+- `/admin/accounts` : créer un compte (identifiant 3 à 64 caractères, sans
+  espace ni caractère de contrôle, unique sans tenir compte de la casse —
+  collision avec le principal incluse ; mot de passe ≥ 12 octets), le
+  désactiver/réactiver, le supprimer (confirmation explicite) ou réinitialiser
+  son mot de passe.
+- La **désactivation** et la **suppression** révoquent immédiatement les
+  sessions du compte ; la connexion d'un compte désactivé est refusée (même
+  coût de vérification qu'un mot de passe erroné). La **réinitialisation** du
+  mot de passe révoque aussi ses sessions.
+- Chaque compte (principal compris) change **son propre** mot de passe dans
+  `/admin/paramètres` : seul le sien est modifié, seules ses sessions sont
+  révoquées.
+- Le tableau de bord affiche le rôle ; la navigation ne montre Certificats,
+  Sécurité et Comptes qu'au principal. Le compte principal (id = 1) est
+  intouchable par ces fonctions.
+
+### Révoquer toutes les sessions (commande d'exploitation)
+
+```bash
+docker compose exec web python -m app.manage invalidate-sessions
+```
+
+Ne touche ni aux comptes ni aux mots de passe : révoque uniquement les sessions
+actives. Indispensable avant tout retour arrière traversant V1.7 (ci-dessous).
+
+### Retour arrière traversant V1.7 — obligatoire
+
+Une image antérieure à V1.7 ne connaît ni `admin_users.role` ni
+`sessions.user_id` : elle accepterait **toute session valide comme
+administrateur principal** (et son changement de mot de passe vise id = 1).
+
+1. Sauvegarder les données (§8) et **arrêter tous les serveurs/writers** qui
+   utilisent cette base (`docker compose stop web`, toutes les répliques s'il
+   y en a). Garder le service arrêté jusqu'au démarrage de l'ancienne image :
+   une invalidation à chaud laisserait recréer des sessions modérateur.
+2. **Sélectionner explicitement l'image V1.7**, puis exécuter la commande hors
+   ligne sur les mêmes données (aucun port publié, aucun serveur lancé) :
+   `HUB_IMAGE_TAG=<SHA_V1_7> docker compose run --rm --no-deps -e HUB_TRIVY_SCHEDULER=0 web python -m app.manage invalidate-sessions`.
+   Attendre le code de sortie 0 et le message d'invalidation. Ne pas relancer
+   V1.7 entre cette étape et le retour arrière.
+3. **Base migrée depuis v3** (cas de la production) : sélectionner puis
+   redéployer l'image antérieure avec
+   `HUB_IMAGE_TAG=<SHA_ANCIEN> HUB_GIT_SHA=<SHA_ANCIEN> docker compose up -d --no-build`
+   (§1). Les colonnes ajoutées sont ignorées et
+   `sessions.user_id` y est nullable : l'ancienne image peut insérer ses propres
+   sessions. **Base créée directement en v4** : ne pas lancer une ancienne
+   image sur cette base (`user_id NOT NULL` empêche ses connexions). Restaurer
+   une sauvegarde compatible v3 si disponible, puis invalider aussi ses
+   sessions hors ligne avant de servir ; sinon rester en V1.7 et demander une
+   procédure de conversion dédiée. Aucune conversion destructive improvisée.
+4. Se reconnecter. Les sessions créées par l'ancienne image (sans `user_id`)
+   seront refusées et purgées à leur première utilisation après restauration
+   de V1.7 : elles ne peuvent pas être réutilisées. Les comptes modérateurs
+   conservés en base ne peuvent pas se connecter à l'ancienne image.
+
+La suite pytest couvre cette mécanique : migration v3 → v4 répétée et
+conservation du principal/catalogue (`tests/test_accounts.py`), révocation
+globale sans toucher aux comptes (`tests/test_manage.py`).

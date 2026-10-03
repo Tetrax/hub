@@ -851,3 +851,72 @@ jeton (archive 0600, même sensibilité que la clé de session) ; le standalone
 s'active sans aucune variable. Le point de D22 « jeton stocké en base : rejeté »
 reste vrai (rien en base) ; son point « secrets côté déploiement uniquement »
 est remplacé par D23 (secrets email) et la présente décision (jeton GitHub).
+
+## D25 — Comptes modérateurs : deux rôles fixes, sessions liées à une identité stable (V1.7)
+
+**Contexte.** Le catalogue est administré par un compte unique (`admin_users`
+singleton id = 1, `admin_required` accepte n'importe quelle session). Le besoin
+validé : des **comptes modérateurs nominatifs** qui gèrent tout le catalogue
+(applications, captures, catégories, ordre, visibilité) sans jamais accéder à la
+configuration sensible (certificats, sécurité/alertes/secrets, préférences
+globales, comptes). Aucun besoin de RBAC configurable ni d'annuaire externe.
+
+**Décision.**
+
+- **Deux rôles fixes** dans `admin_users.role` : `admin` — le compte principal
+  (id = 1), unique, non supprimable, non désactivable, non rétrogradable ; les
+  fonctions de gestion des comptes ne ciblent que les modérateurs. Le rôle n'est
+  **jamais** lu d'un formulaire : aucun second principal ne peut être créé.
+- **Comptes modérateurs** créés par le principal depuis `/admin/accounts` :
+  identifiant libre validé et borné (3 à 64 caractères, sans espace ni caractère
+  de contrôle, unique avec `COLLATE NOCASE` — collision avec le principal
+  incluse), mot de passe minimum 12 octets ; désactivation/réactivation,
+  suppression (confirmation explicite), réinitialisation du mot de passe.
+- **Permissions côté serveur** : `admin_required` = toute session active
+  (catalogue, paramètres personnels) ; `principal_required` = compte principal
+  (certificats, sécurité, comptes, préférences globales) — refus **403** même
+  sur URL directe ou POST forgé. Le rôle et l'état du compte sont relus en base
+  à chaque requête, jamais depuis le cookie ni un champ de formulaire.
+- **Sessions liées à l'identité** (`sessions.user_id`, indexé) : la session est
+  résolue avec son compte à chaque requête ; compte supprimé/désactivé ou
+  session orpheline ⇒ session purgée et refusée. Désactivation, suppression,
+  réinitialisation et changement de mot de passe révoquent immédiatement les
+  sessions du compte concerné — et **seulement** les siennes : chacun change son
+  propre mot de passe (`/admin/paramètres`, mot de passe actuel exigé) sans
+  déconnecter les autres.
+- **Anti-énumération** : identifiant inconnu ou compte désactivé suit le même
+  chemin de vérification coûteux qu'un mot de passe erroné (hash factice) ;
+  verrouillage après échecs conservé pour tous les comptes.
+- **Migration v3 → v4** idempotente et transactionnelle : `admin_users` est
+  recréée avec `role`/`is_active` en recopiant à l'identique identifiant, hash
+  et horodatages du compte principal (rôle `admin`, actif) ; `sessions` gagne
+  `user_id` et les sessions antérieures — qui ne peuvent appartenir qu'au
+  compte principal, seul existant — lui sont rattachées : l'administrateur
+  n'est pas déconnecté par la montée de version.
+- **Hors périmètre, par choix** : pas d'autre rôle, pas de permissions fines par
+  ressource, pas de comptes désactivés au-delà de la gestion manuelle par le
+  principal.
+
+**Alternatives.** RBAC configurable : rejeté — deux rôles couvrent le besoin
+validé, la complexité n'est pas démontrée. Rôle stocké en session : rejeté — il
+doit être relu de la base à chaque requête pour que désactivation,
+réinitialisation ou suppression soient immédiates. Annuaire externe
+(OIDC/LDAP) : rejeté — aucune infrastructure de ce type dans le périmètre SNS,
+le Hub reste autonome (standalone inclus). Compte principal renommable ou
+supprimable : rejeté — le point de reprise `reset-admin` (CLI) cible id = 1.
+
+**Conséquences / rollback.** Base en schéma v4 ; une image antérieure à V1.7 ne
+connaît ni `role` ni `user_id` : elle **accepterait toute session valide comme
+administrateur principal** (et son changement de mot de passe vise id = 1).
+Avant tout retour arrière traversant V1.7, arrêter tous les serveurs/writers,
+puis révoquer **toutes** les sessions hors ligne avec l'image V1.7 explicitement
+sélectionnée (`HUB_IMAGE_TAG=<SHA_V1_7> docker compose run --rm --no-deps -e
+HUB_TRIVY_SCHEDULER=0 web python -m app.manage invalidate-sessions`, procédure
+`operations.md` §17).
+Ne pas redémarrer V1.7 entre invalidation et retour arrière. Sur une base migrée
+depuis v3 uniquement, l'ancienne image reste fonctionnelle (`sessions.user_id`
+y est nullable, les colonnes ajoutées sont ignorées) ; ses sessions sans
+`user_id` sont refusées à la restauration de V1.7. Une base neuve v4 n'est pas
+compatible avec l'ancienne image : restaurer une sauvegarde v3 compatible ou
+rester en V1.7. L'arrêt des writers et l'invalidation sont les invariants de
+sécurité du rollback.

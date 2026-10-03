@@ -86,16 +86,19 @@ structure (vérifié par comparaison des rendus `docker compose config`).
   Le contexte SSL est construit par les workers : un `SIGHUP` du maître les
   redémarre gracieusement et reprend la nouvelle paire, **sans redémarrer le
   conteneur** (voir D16).
-- **SQLite** (mode WAL) pour le catalogue, les sessions, le compte admin et les
-  tentatives de connexion ; **uploads** de screenshots sur disque. Schéma
-  versionné (`PRAGMA user_version`) et migré automatiquement au démarrage.
+- **SQLite** (mode WAL) pour le catalogue, les sessions, les comptes (principal
+  et modérateurs) et les tentatives de connexion ; **uploads** de screenshots
+  sur disque. Schéma versionné (`PRAGMA user_version`) et migré automatiquement
+  au démarrage.
 - Modules : `views_public.py` (landing, images, `/healthz`), `views_admin.py`
   (CRUD catalogue, paramètres, session), `views_cert.py` (parcours certificat),
   `certclient.py` + `hub_cert_protocol.py` (client du helper), `security.py`
-  (en-têtes, frontière proxy, origine), `auth.py` (scrypt, sessions, CSRF,
-  verrouillage), `uploads.py` (validation par magic bytes), `urls.py`
+  (en-têtes, frontière proxy, origine), `auth.py` (scrypt, comptes et rôles,
+  sessions liées à l'identité, CSRF, verrouillage), `uploads.py` (validation
+  par magic bytes), `urls.py`
   (validation d'entrées), `certparse.py` (lecture PKCS#12/PFX et DER, en mémoire),
-  `manage.py` (CLI d'exploitation : `seed`, `reset-admin`, `report-orphans`).
+  `manage.py` (CLI d'exploitation : `seed`, `reset-admin`,
+  `invalidate-sessions`, `report-orphans`).
   `catalog.py` porte aussi les catégories (CRUD, ordre, réassignation).
   Le parcours certificat passe par **`certbackend.py`** : `certclient.py` (helper
   du VPS), `certlocal.py` (TLS direct du standalone) ou aucun backend — les vues
@@ -144,6 +147,9 @@ security_events(id, created_at, kind, severity, summary, detail_json, commit_sha
 - `security_state` (ligne unique) porte le dernier rapport publié et sa
   provenance ; `security_events` l'historique minimal et le statut de
   notification (V1.6, tables additives — schéma v3).
+- `admin_users` porte `role` (`admin` unique / `moderator`) et `is_active` ;
+  `sessions` porte `user_id` (identité stable, indexé) — schéma v4 (V1.7,
+  migration v3 → v4 additive et transactionnelle, voir D25).
 
 ### 3. Certificats : `hub_certctl` + trois backends
 
@@ -195,7 +201,7 @@ NoNewPrivileges, CapabilityBoundingSet réduit, UMask=0027). Rôle :
 
 | Donnée | Emplacement hôte | Conteneur | Sauvegarde |
 |---|---|---|---|
-| Catalogue, sessions, compte admin | `runtime/data/hub.sqlite` | `/data/hub.sqlite` | oui (copie SQLite cohérente) |
+| Catalogue, sessions, comptes (principal/modérateurs) | `runtime/data/hub.sqlite` | `/data/hub.sqlite` | oui (copie SQLite cohérente) |
 | Screenshots | `runtime/data/uploads/` | `/data/uploads/` | oui |
 | Clé de signature des sessions | `runtime/data/.secret_key` (0600) | `/data/.secret_key` | oui (sensible) |
 | Secrets administrables (jeton GitHub, mot de passe SMTP, secret client Microsoft 365) | `runtime/data/secrets/` (0700, fichiers 0600) | `/data/secrets/` | oui (sensible, archive 0600) |
