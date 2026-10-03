@@ -5,7 +5,8 @@
 <div class="admin-header">
   <div>
     <h1 class="admin-title">Tableau de bord</h1>
-    <p class="admin-sub">Connecté en tant que {{ admin_username }}.</p>
+    <p class="admin-sub">Connecté en tant que {{ admin_username }} —
+      {{ 'administrateur principal' if is_principal else 'modérateur' }}.</p>
   </div>
   <a class="button button-primary" href="{{ url_for('admin.app_new') }}">+ Ajouter une application</a>
 </div>
@@ -31,6 +32,7 @@
   </div>
 </section>
 
+{% if is_principal %}
 <section class="panel">
   <h2 class="panel-title">Certificat HTTPS</h2>
   {% if cert_error %}
@@ -59,4 +61,5 @@
     <a class="button" href="{{ url_for('cert.certificates') }}">Gérer le certificat</a>
   </div>
 </section>
+{% endif %}
 {% endblock %}

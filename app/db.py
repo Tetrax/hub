@@ -10,17 +10,23 @@ Le schéma est versionné par `PRAGMA user_version` :
 - version 3 : surveillance Trivy — `security_state` (dernier état publié et
   provenance) et `security_events` (historique minimal, statut de notification).
   Tables additives : aucune migration des données existantes.
+- version 4 : comptes multiples — `admin_users` porte `role` (`admin` /
+  `moderator`) et `is_active` ; `sessions.user_id` lie chaque session à une
+  identité stable. Le compte principal (id = 1) conserve son identifiant et son
+  hash ; les sessions existantes (créées avant V1.7, donc forcément par le
+  compte principal) lui sont rattachées.
 """
 
 from __future__ import annotations
 
+import fcntl
 import re
 import sqlite3
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 FALLBACK_CATEGORY_NAME = "Autres"
 FALLBACK_CATEGORY_SLUG = "autres"
@@ -60,21 +66,26 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS admin_users (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    username TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin', 'moderator')),
+    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     password_changed_at TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
     username TEXT NOT NULL,
     csrf_token TEXT NOT NULL,
     created_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
 
 CREATE TABLE IF NOT EXISTS login_attempts (
     key TEXT PRIMARY KEY,
@@ -168,9 +179,19 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path | str) -> None:
+    # Les workers gunicorn démarrent ensemble : sérialiser aussi l'activation
+    # WAL et la détection des migrations, pas seulement leurs écritures SQL.
+    # Le verrou est relâché même après exception/arrêt du processus.
+    with Path(str(db_path) + ".init.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _init_db_locked(db_path)
+
+
+def _init_db_locked(db_path: Path | str) -> None:
     connection = connect(db_path)
     try:
         _migrate_legacy_categories(connection)
+        _migrate_accounts_v4(connection)
         connection.executescript(SCHEMA)
         _ensure_fallback_category(connection)
         for key, value in DEFAULT_SETTINGS.items():
@@ -336,6 +357,65 @@ def _migrate_legacy_categories(connection: sqlite3.Connection) -> None:
         if violations:
             raise RuntimeError(f"Migration des catégories : intégrité référentielle ({violations})")
 
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.isolation_level = "DEFERRED"
+
+
+def _migrate_accounts_v4(connection: sqlite3.Connection) -> None:
+    """Migration v3 → v4 : comptes multiples et sessions liées à une identité stable.
+
+    `admin_users` gagne `role` et `is_active` (le compte principal existant
+    devient `admin` actif) ; `sessions` gagne `user_id`. Idempotente : détecte
+    les colonnes manquantes. Transactionnelle : identifiant, hash et horodatage
+    du compte principal sont recopiés à l'identique. Les sessions créées avant
+    V1.7 ne peuvent appartenir qu'au compte principal (seul compte existant) :
+    elles lui sont rattachées pour ne pas déconnecter l'administrateur au
+    déploiement.
+    """
+    if not _table_exists(connection, "admin_users"):
+        return  # base neuve : le schéma v4 est créé directement
+    needs_users = not {"role", "is_active"}.issubset(_columns(connection, "admin_users"))
+    needs_sessions = _table_exists(connection, "sessions") and "user_id" not in _columns(
+        connection, "sessions"
+    )
+    if not needs_users and not needs_sessions:
+        return
+
+    connection.isolation_level = None  # transaction explicite (DDL + DML atomiques)
+    try:
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("BEGIN IMMEDIATE")
+        if needs_users:
+            connection.execute("ALTER TABLE admin_users RENAME TO admin_users_v3")
+            connection.execute(
+                """
+                CREATE TABLE admin_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'admin'
+                        CHECK (role IN ('admin', 'moderator')),
+                    is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+                    password_changed_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "INSERT INTO admin_users (id, username, password_hash, role, is_active, "
+                "password_changed_at, created_at) "
+                "SELECT id, username, password_hash, 'admin', 1, "
+                "password_changed_at, created_at FROM admin_users_v3"
+            )
+            connection.execute("DROP TABLE admin_users_v3")
+        if needs_sessions:
+            connection.execute("ALTER TABLE sessions ADD COLUMN user_id INTEGER")
+            connection.execute("UPDATE sessions SET user_id = 1 WHERE user_id IS NULL")
         connection.execute("COMMIT")
     except Exception:
         connection.execute("ROLLBACK")

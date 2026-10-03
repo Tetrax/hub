@@ -56,7 +56,7 @@ def _secrets(app) -> trivy_email.EmailSecrets:
 
 
 @bp.get("")
-@auth.admin_required
+@auth.principal_required
 def dashboard():
     session_row = auth.require_session()
     connection, settings, state = _context(current_app)
@@ -97,7 +97,7 @@ def dashboard():
 
 
 @bp.get("/vulnerabilities")
-@auth.admin_required
+@auth.principal_required
 def vulnerabilities():
     session_row = auth.require_session()
     _connection, _settings, state = _context(current_app)
@@ -118,7 +118,7 @@ def vulnerabilities():
 
 
 @bp.post("/sync")
-@auth.admin_required
+@auth.principal_required
 def sync_now():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -129,7 +129,7 @@ def sync_now():
 
 
 @bp.post("/settings")
-@auth.admin_required
+@auth.principal_required
 def settings_save():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -183,7 +183,7 @@ def settings_save():
 
 
 @bp.post("/secret/delete")
-@auth.admin_required
+@auth.principal_required
 def secret_delete():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -213,7 +213,7 @@ def secret_delete():
 
 
 @bp.post("/test-email")
-@auth.admin_required
+@auth.principal_required
 def test_email():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -228,7 +228,7 @@ def test_email():
 
 
 @bp.post("/retry-notification")
-@auth.admin_required
+@auth.principal_required
 def retry_notification():
     session_row = auth.require_session()
     _require_csrf(session_row)

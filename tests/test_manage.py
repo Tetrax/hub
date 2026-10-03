@@ -198,7 +198,7 @@ def test_reset_admin_updates_password_and_invalidates_sessions(cli_data, monkeyp
     connection = db(cli_data)
     username = auth.admin_username(connection) or "admin"
     with create_app().app_context():  # create_session lit la configuration de session
-        auth.create_session(connection, username)
+        auth.create_session(connection, 1, username)
     connection.commit()
     assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
     connection.close()
@@ -232,4 +232,32 @@ def test_set_password_is_an_alias(cli_data, monkeypatch):
     assert manage.main(["set-password"]) == 0
     connection = db(cli_data)
     assert auth.verify_admin(connection, "admin", "Encore-Un-MotDePasse-3")
+    connection.close()
+
+
+def test_invalidate_sessions_revokes_every_account_without_touching_them(cli_data, capsys):
+    """Commande de retour arrière V1.7 : toutes les sessions, aucun compte modifié."""
+    from app import create_app
+
+    create_cli_admin(cli_data)
+    connection = db(cli_data)
+    with create_app().app_context():  # create_session lit la configuration de session
+        auth.create_session(connection, 1, "admin")
+        row, error = auth.create_moderator(connection, "modo-rollback", "MotDePasse-Modo-1")
+        assert error is None and row is not None
+        auth.create_session(connection, int(row["id"]), row["username"])
+    connection.commit()
+    assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 2
+    connection.close()
+
+    assert manage.main(["invalidate-sessions"]) == 0
+    assert "Toutes les sessions actives" in capsys.readouterr().out
+
+    connection = db(cli_data)
+    assert connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    assert auth.verify_admin(connection, "admin", "MotDePasse-Admin-1")
+    row = connection.execute(
+        "SELECT username, role, is_active FROM admin_users WHERE username = 'modo-rollback'"
+    ).fetchone()
+    assert row is not None and row["role"] == "moderator" and row["is_active"] == 1
     connection.close()

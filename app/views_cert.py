@@ -50,6 +50,7 @@ def _render_page(session_row: dict, *, validation=None, status_code: int = 200):
             "admin/certificates.html",
             csrf=session_row["csrf_token"],
             admin_username=session_row["username"],
+            is_principal=auth.is_principal(session_row),
             active_page="certificates",
             status=status,
             helper_error=helper_error,
@@ -104,14 +105,14 @@ def _finish_validation(
 
 
 @bp.get("")
-@auth.admin_required
+@auth.principal_required
 def certificates():
     session_row = auth.require_session()
     return _render_page(session_row)
 
 
 @bp.post("/validate")
-@auth.admin_required
+@auth.principal_required
 def validate():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -158,7 +159,7 @@ def validate():
 
 
 @bp.post("/validate-pkcs12")
-@auth.admin_required
+@auth.principal_required
 def validate_pkcs12():
     """Import PKCS#12 / PFX : extraction en mémoire puis pipeline commun."""
     session_row = auth.require_session()
@@ -196,7 +197,7 @@ def _serialize_summary(result: dict) -> str:
 
 
 @bp.post("/activate")
-@auth.admin_required
+@auth.principal_required
 def activate():
     session_row = auth.require_session()
     _require_csrf(session_row)
