@@ -1,19 +1,34 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-10-03 (UTC)
-Statut : **V1.7.0 candidate — validée localement, revue indépendante à faire**
-(rôles fixes principal/modérateur, gestion des comptes par le principal,
-permissions serveur, révocation des sessions). Branche `wt/t_9ddd4150`, carte
-`t_9ddd4150` : **602 tests pytest réussis** après les derniers correctifs ; build
-Docker `hub:t_9ddd4150-check322` réussi ; recette Chromium complète sur instance
-HTTP isolée : **95/95 vérifications réussies**, dont le parcours modérateur et
-le correctif mobile, avec deux exclusions attendues (captures préexistantes
-absentes, activation TLS non configurée). PR/CI exacte et revue indépendante
-restent à attester dans le handoff de la carte. La base candidate passe en
-schéma v4 à sa première exécution. Mise à jour d'`AGENTS.md` différée faute
-d'approbation : fichier laissé intact.
-**La production reste V1.6.2, inchangée** : aucun merge ni déploiement pendant
-la phase Builder, puis intégration par l'Orchestrateur après PASS indépendant.
+Statut : **V1.7.0 déployée et vérifiée en production le 2026-10-03 à 09:07 UTC**.
+La [PR #1](https://github.com/Tetrax/hub/pull/1) est fusionnée ; commit servi
+`15cba24ee4c5d9b4d504eaee83e210d910639f0a`, image
+`sha256:81a4134d2bef506204dc8552a887dc9f0eba13a582d73df76598f93840cc2378`.
+Le correctif de concurrence `8791620` a reçu le **PASS indépendant de seconde
+revue** (carte `t_9ddd4150`, run327), après **620 tests pytest réussis** chez
+Builder puis Reviewer. La CI exacte du correctif (`37100664576`) et celle
+après fusion (`37111497640`) sont vertes. Aucun code changé après la revue.
+
+Recette complète rejouée sur une instance isolée de l'**image effectivement
+déployée** : **95/95 PASS** (deux skips HTTP attendus, aucun skip modérateur).
+Recette publique sur le vrai HTTPS, depuis le VPS : **41/41 PASS**. Conteneur
+healthy, zéro redémarrage, version/SHA cohérents, accès anonyme aux comptes
+redirigé vers la connexion, certificat servi inchangé, `nginx -t` valide et
+helper actif. Aucun compte de test créé en production et aucun reset du
+principal ; son parcours authentifié de production n'a pas été rejoué faute
+de session disponible (parcours complet exercé en isolation).
+
+Sauvegarde cohérente avant bascule, writers arrêtés :
+`hub-backup-20261003T090734Z.tar.gz` et archive certificats associée sous
+`/home/tetrax/backups/hub/` (archives vérifiées). Comparaison à la sauvegarde
+après migration `20261003T090826Z` : **neuf tables et toutes anciennes colonnes,
+six applications, six captures et identité/hash du principal conservés** ;
+schéma v3 → v4, intégrité et clés étrangères OK. Aucune restauration nécessaire.
+Rollback conservé : image V1.6.2 `hub:734457d2059a571d5982a48202072175278df80f`,
+avec invalidation hors ligne obligatoire selon `operations.md` §17.
+`AGENTS.md` reste inchangé : sa mise à jour protégée est différée faute
+d'approbation. Les commits documentaires de clôture ne redéploient pas l'image.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques
@@ -22,7 +37,7 @@ la phase Builder, puis intégration par l'Orchestrateur après PASS indépendant
 
 ## Version et périmètre
 
-- **V1.7 (2026-10-02, candidate)** : **comptes modérateurs** — l'administrateur
+- **V1.7 (2026-10-03, déployée)** : **comptes modérateurs** — l'administrateur
   principal crée des comptes nominatifs (`/admin/accounts`) qui gèrent tout le
   catalogue (applications, captures, catégories, ordre, visibilité) mais
   n'accèdent ni aux certificats, ni à la sécurité/alertes/secrets, ni aux
@@ -104,7 +119,7 @@ la phase Builder, puis intégration par l'Orchestrateur après PASS indépendant
 |---|---|
 | URL | https://hub.valdev.me |
 | Conteneur | `hub-web` (Compose projet `hub`, `COMPOSE_FILE=compose.yaml:compose.vps.yaml`) |
-| Image | `hub:<SHA>` (SHA = HEAD du dépôt au déploiement) |
+| Image | `hub:15cba24ee4c5d9b4d504eaee83e210d910639f0a` (commit applicatif déployé, avant clôture documentaire) |
 | Exposition | `127.0.0.1:13744` → `8000` (gunicorn, 2 workers) |
 | Données | `runtime/data/hub.sqlite` (WAL), `runtime/data/uploads/`, `runtime/data/.secret_key` |
 | Certificat | Let's Encrypt servi depuis `/var/lib/hub/certificates/active/` (helper root) |
@@ -129,8 +144,8 @@ gh workflow run ci.yml                            # scan de sécurité manuel
 
 ## État fonctionnel
 
-- **Catalogue** : 6 applications publiées (FortiUpgrade, FortiFlow, FortiFlow2,
-  FortiAnonymous, Vysion, Portfolio), captures réelles en WebP.
+- **Catalogue** : 6 applications référencées, 4 affichées ; captures réelles
+  conservées (FortiUpgrade, FortiFlow, FortiFlow2, FortiAnonymous, Vysion, Portfolio).
 - **Catégories** : `Autres` (repli, protégée), `Fortinet`, `Sécurité` —
   administrables (création, renommage, ordre, suppression avec réassignation).
 - **Thème** : sombre (référence) / clair, bascule mémorisée par navigateur,
@@ -146,11 +161,10 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   variable.
 - **Contrôle de sécurité (CI, D21)** : scan Trivy quotidien + push/PR sur l'image
   réelle, **informatif** (artefact `trivy-report`, résumé dans le run). État au
-  2026-09-17 : **13 vulnérabilités corrigibles (3 CRITICAL · 10 HIGH), toutes
+  2026-10-03 (CI après fusion) : **14 vulnérabilités corrigibles (3 CRITICAL · 11 HIGH), toutes
   dans des paquets OS Debian** de l'image de base (`perl-base`, `gzip`,
-  `libpcre2-8-0`, `libsqlite3-0`) — **0 côté Python** ; la base du jour porte
-  encore ces versions, le finding sera résolu par un rafraîchissement du digest
-  `python:3.12-slim` quand Debian publiera les correctifs.
+  `libpcre2-8-0`, `libsqlite3-0`). Findings non corrigés dans ce lot ; leur
+  remédiation demande un chantier distinct, sans changer la politique informative.
 - **Surveillance de l'image (V1.6, D22 — transport V1.6.1, D23)** : le Hub
   **consomme** l'artefact `trivy-report` (aucun scan côté Hub) et affiche l'état
   dans `/admin/security` — baseline silencieuse à la première ingestion, puis
@@ -173,13 +187,12 @@ gh workflow run ci.yml                            # scan de sécurité manuel
   depuis `/admin/accounts` (V1.7, D25) ; sessions serveur liées au compte,
   CSRF, verrouillage après échecs, refus 403 des surfaces sensibles aux
   modérateurs.
-- **Migration de base** : la candidate V1.7 porte le schéma en
+- **Migration de base** : V1.7 a porté la production au schéma
   `user_version = 4` (migration v3 → v4 additive et transactionnelle :
   `admin_users.role` + `is_active`, `sessions.user_id` — procédure
-  `operations.md` §5, rollback §17). La production 1.6.2 tourne encore sur le
-  schéma v3 (migration V1.1 appliquée le 2026-09-16, sauvegarde préalable
-  conservée ; V1.6 a ajouté les tables `security_state`/`security_events`,
-  additives).
+  `operations.md` §5, rollback §17). Migration répétée d'abord sur copie réelle
+  puis conservation vérifiée avant/après bascule de production ; aucun compte
+  modérateur précréé ni donnée de recette ajoutée à la base réelle.
 
 ### Certificat TLS en production (V1.2)
 
@@ -226,7 +239,7 @@ sans Nginx, dans un bac à sable `/tmp`).
    image accepterait sinon toute session valide comme administrateur principal.
 3. **Base migrée depuis v3** : sélectionner l'image connue avec
    `HUB_IMAGE_TAG=<SHA_ANCIEN> HUB_GIT_SHA=<SHA_ANCIEN> docker compose up -d --no-build`
-   (`hub:previous` conserve l'image précédente). **Base neuve v4** : restaurer
+   (utiliser le SHA connu, jamais supposer `hub:previous` fiable). **Base neuve v4** : restaurer
    une sauvegarde v3 compatible et invalider aussi ses sessions hors ligne
    selon §17, ou rester en V1.7 ; ne pas lancer l'ancienne image sur une base
    neuve v4. Toute restauration de `hub.sqlite` se fait service arrêté (§8).

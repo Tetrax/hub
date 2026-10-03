@@ -61,8 +61,11 @@ Une fois ces prérequis satisfaits, sélectionner l'ancienne image :
 HUB_IMAGE_TAG=<SHA_ANCIEN> HUB_GIT_SHA=<SHA_ANCIEN> docker compose up -d --no-build
 ```
 
-L'image précédente est conservée sous `hub:previous` par `scripts/build.sh` ;
-les images déployées restent présentes localement (le SHA est le tag).
+Les images déployées restent présentes localement sous leur SHA : conserver
+explicitement le tag de la dernière version saine pour le rollback.
+Attention : `scripts/build.sh` affecte aussi `hub:previous` à l'image qu'il
+vient de construire ; ce tag mutable ne désigne donc pas une ancienne version
+fiable après un build. Ne pas l'utiliser comme référence de retour arrière.
 Vérifier ensuite : `docker inspect hub-web --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'`
 puis `curl -k -o /dev/null -w '%{http_code}\n' https://127.0.0.1/ -H 'Host: hub.valdev.me'`.
 
