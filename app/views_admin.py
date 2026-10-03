@@ -562,9 +562,6 @@ def settings_password():
     current = request.form.get("current_password") or ""
     new_password = request.form.get("new_password") or ""
     confirmation = request.form.get("confirmation") or ""
-    if not auth.verify_user_password(connection, session_row["user_id"], current):
-        flash("Mot de passe actuel incorrect.", "error")
-        return redirect(url_for("admin.settings"))
     ok, error = auth.validate_password(new_password)
     if not ok:
         flash(error, "error")
@@ -572,11 +569,10 @@ def settings_password():
     if new_password != confirmation:
         flash("Les deux mots de passe ne correspondent pas.", "error")
         return redirect(url_for("admin.settings"))
-    if auth.verify_user_password(connection, session_row["user_id"], new_password):
-        flash("Le nouveau mot de passe doit être différent de l'actuel.", "error")
+    error = auth.change_own_password(connection, session_row, current, new_password)
+    if error is not None:
+        flash(error, "error")
         return redirect(url_for("admin.settings"))
-    auth.update_password(connection, session_row["user_id"], new_password)
-    auth.destroy_user_sessions(connection, session_row["user_id"])
     current_app.logger.info(
         "Administration : mot de passe modifié (compte id=%s), sessions du compte invalidées",
         session_row["user_id"],

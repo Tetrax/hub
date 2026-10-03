@@ -234,6 +234,35 @@ def update_password(connection, user_id: int, password: str) -> None:
     connection.commit()
 
 
+def change_own_password(
+    connection, session_row: dict, current_password: str, new_password: str,
+) -> str | None:
+    """Change le mot de passe personnel, ou retourne une erreur sans mutation.
+
+    La session chargée par le décorateur peut déjà être révoquée. Relire son
+    identité et son autorité sous le même verrou que la vérification du mot de
+    passe et update_password : reset, désactivation, suppression et révocation
+    sont ainsi ordonnés avant OU après cette transaction, jamais au milieu.
+    """
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        live_session = connection.execute(
+            "SELECT 1 FROM sessions s JOIN admin_users u ON u.id = s.user_id "
+            "WHERE s.token_hash = ? AND s.user_id = ? AND u.is_active = 1 "
+            "AND s.expires_at > ?",
+            (session_row["token_hash"], session_row["user_id"], db.now_iso()),
+        ).fetchone()
+        if live_session is None:
+            return "Session expirée ou révoquée. Veuillez vous reconnecter."
+        if not verify_user_password(connection, session_row["user_id"], current_password):
+            return "Mot de passe actuel incorrect."
+        if verify_user_password(connection, session_row["user_id"], new_password):
+            return "Le nouveau mot de passe doit être différent de l'actuel."
+        # Point d'écriture unique, avec révocation ciblée dans le même commit.
+        update_password(connection, session_row["user_id"], new_password)
+    return None
+
+
 def verify_user_password(connection, user_id: int, password: str) -> bool:
     row = connection.execute(
         "SELECT password_hash FROM admin_users WHERE id = ?", (user_id,)
