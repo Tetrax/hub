@@ -4,6 +4,7 @@ Utilisation (dans le conteneur ou en local) :
 
     python -m app.manage seed [chemin/catalog.json]   # amorce le catalogue initial
     python -m app.manage reset-admin                  # réinitialise le mot de passe admin
+    python -m app.manage invalidate-sessions          # révoque toutes les sessions actives
     python -m app.manage report-orphans               # screenshots non référencés
     python -m app.manage set-password                 # équivalent de reset-admin (alias)
 
@@ -100,9 +101,22 @@ def _reset_admin() -> int:
     if password != confirmation:
         print("Les deux saisies ne correspondent pas.", file=sys.stderr)
         return 1
-    auth.update_password(connection, password)
+    auth.update_password(connection, 1, password)
     auth.destroy_all_sessions(connection)
     print("Mot de passe administrateur réinitialisé ; toutes les sessions ont été invalidées.")
+    return 0
+
+
+def _invalidate_sessions() -> int:
+    """Révoque toutes les sessions actives (sans toucher aux comptes).
+
+    Indispensable avant un retour arrière vers une image antérieure à V1.7 :
+    elle ignore `sessions.user_id`/`role` et accepterait toute session valide
+    comme administrateur principal.
+    """
+    connection = auth.db_connection()
+    auth.destroy_all_sessions(connection)
+    print("Toutes les sessions actives ont été invalidées.")
     return 0
 
 
@@ -139,6 +153,8 @@ def main(argv: list[str]) -> int:
             return _seed(argv[1] if len(argv) > 1 else None)
         if command in {"reset-admin", "set-password"}:
             return _reset_admin()
+        if command == "invalidate-sessions":
+            return _invalidate_sessions()
         if command == "report-orphans":
             return _report_orphans()
     print(f"Commande inconnue : {command}", file=sys.stderr)

@@ -47,6 +47,7 @@ def _require_csrf(session_row: dict) -> None:
 def render_admin(template: str, session_row: dict, **context):
     context.setdefault("csrf", session_row["csrf_token"])
     context.setdefault("admin_username", session_row["username"])
+    context.setdefault("is_principal", auth.is_principal(session_row))
     return render_template(template, **context)
 
 
@@ -73,13 +74,16 @@ def dashboard():
     session_row = auth.require_session()
     connection = auth.db_connection()
     stats = catalog.stats(connection)
-    from . import certclient
-
+    # L'état du certificat est une configuration sensible : administrateur
+    # principal uniquement (le modérateur n'y a aucun accès).
     cert_status, cert_error = None, None
-    try:
-        cert_status = certclient.get_status()
-    except certclient.CertHelperError as error:
-        cert_error = str(error)
+    if auth.is_principal(session_row):
+        from . import certclient
+
+        try:
+            cert_status = certclient.get_status()
+        except certclient.CertHelperError as error:
+            cert_error = str(error)
     return render_admin(
         "admin/dashboard.html",
         session_row,
@@ -105,20 +109,20 @@ def setup():
         password = request.form.get("password") or ""
         confirmation = request.form.get("confirmation") or ""
         error = None
-        if not (3 <= len(username) <= 64):
-            error = "Identifiant invalide (3 à 64 caractères)."
-        ok, password_error = auth.validate_password(password)
-        if error is None and not ok:
-            error = password_error
-        if error is None and password != confirmation:
-            error = "Les deux mots de passe ne correspondent pas."
+        username_ok, error = auth.validate_username(username)
+        if username_ok:
+            password_ok, password_error = auth.validate_password(password)
+            if not password_ok:
+                error = password_error
+            elif password != confirmation:
+                error = "Les deux mots de passe ne correspondent pas."
         if error is not None:
             flash(error, "error")
             return render_template("admin/setup.html", csrf=_preauth_csrf(), username=username)
         if not auth.create_admin(connection, username, password):
             flash("Un compte administrateur existe déjà.", "error")
             return redirect(url_for("admin.login"))
-        token, _ = auth.create_session(connection, username)
+        token, _ = auth.create_session(connection, 1, username)
         response = redirect(url_for("admin.dashboard"))
         auth.set_session_cookie(response, token)
         flash("Compte administrateur créé.", "success")
@@ -142,13 +146,19 @@ def login():
             minutes = max(1, remaining // 60 + 1)
             flash(f"Trop de tentatives échouées. Nouvelle tentative possible dans {minutes} min.", "error")
             return render_template("admin/login.html", csrf=_preauth_csrf()), 429
-        if auth.verify_admin(connection, username, password):
+        # La vérification et l'insertion de session partagent le verrou SQLite :
+        # un reset/désactivation ne peut s'intercaler et laisser un ancien login
+        # créer une nouvelle session après la révocation.
+        connection.execute("BEGIN IMMEDIATE")
+        account = auth.authenticate(connection, username, password)
+        if account is not None:
+            token, _ = auth.create_session(connection, account["id"], account["username"])
             auth.clear_failures(connection, username, ip)
             auth.purge_expired_sessions(connection)
-            token, _ = auth.create_session(connection, username)
             response = redirect(url_for("admin.dashboard"))
             auth.set_session_cookie(response, token)
             return response
+        connection.rollback()
         auth.register_failure(connection, username, ip)
         current_app.logger.warning("Échec de connexion administrateur (identifiant refusé)")
         flash("Identifiants invalides.", "error")
@@ -227,6 +237,7 @@ def _form_context(connection, session_row, app_row, form):
     return {
         "csrf": session_row["csrf_token"],
         "admin_username": session_row["username"],
+        "is_principal": auth.is_principal(session_row),
         "active_page": "apps",
         "app": app_row,
         "values": values,
@@ -521,20 +532,18 @@ def category_quick_create():
 def settings():
     session_row = auth.require_session()
     connection = auth.db_connection()
-    row = connection.execute(
-        "SELECT username, password_changed_at FROM admin_users WHERE id = 1"
-    ).fetchone()
+    row = auth.get_account(connection, session_row["user_id"])
     return render_admin(
         "admin/settings.html",
         session_row,
         active_page="settings",
         open_new_tab=db.get_setting(connection, "open_links_new_tab", "1") == "1",
-        admin_info=dict(row) if row else None,
+        account_info=dict(row) if row else None,
     )
 
 
 @bp.post("/settings/preferences")
-@auth.admin_required
+@auth.principal_required
 def settings_preferences():
     session_row = auth.require_session()
     _require_csrf(session_row)
@@ -553,7 +562,7 @@ def settings_password():
     current = request.form.get("current_password") or ""
     new_password = request.form.get("new_password") or ""
     confirmation = request.form.get("confirmation") or ""
-    if not auth.verify_admin(connection, session_row["username"], current):
+    if not auth.verify_user_password(connection, session_row["user_id"], current):
         flash("Mot de passe actuel incorrect.", "error")
         return redirect(url_for("admin.settings"))
     ok, error = auth.validate_password(new_password)
@@ -563,18 +572,151 @@ def settings_password():
     if new_password != confirmation:
         flash("Les deux mots de passe ne correspondent pas.", "error")
         return redirect(url_for("admin.settings"))
-    if auth.verify_password(
-        connection.execute("SELECT password_hash FROM admin_users WHERE id = 1").fetchone()[
-            "password_hash"
-        ],
-        new_password,
-    ):
+    if auth.verify_user_password(connection, session_row["user_id"], new_password):
         flash("Le nouveau mot de passe doit être différent de l'actuel.", "error")
         return redirect(url_for("admin.settings"))
-    auth.update_password(connection, new_password)
-    auth.destroy_all_sessions(connection)
-    current_app.logger.info("Administration : mot de passe modifié, sessions invalidées")
+    auth.update_password(connection, session_row["user_id"], new_password)
+    auth.destroy_user_sessions(connection, session_row["user_id"])
+    current_app.logger.info(
+        "Administration : mot de passe modifié (compte id=%s), sessions du compte invalidées",
+        session_row["user_id"],
+    )
     response = redirect(url_for("admin.login"))
     auth.clear_session_cookie(response)
     flash("Mot de passe modifié. Veuillez vous reconnecter.", "success")
     return response
+
+
+# --- Comptes modérateurs (administrateur principal) --------------------------
+
+
+def _account_target(connection, user_id: int):
+    """Compte ciblé par une action de gestion, ou 403/404.
+
+    Le compte principal (et tout compte non modérateur) est intouchable par ces
+    fonctions : ni désactivation, ni suppression, ni réinitialisation.
+    """
+    row = auth.get_account(connection, user_id)
+    if row is None:
+        abort(404)
+    if int(row["id"]) == 1 or row["role"] != auth.ROLE_MODERATOR:
+        abort(403)
+    return row
+
+
+@bp.get("/accounts")
+@auth.principal_required
+def accounts_list():
+    session_row = auth.require_session()
+    connection = auth.db_connection()
+    accounts = auth.list_accounts(connection)
+    return render_admin(
+        "admin/accounts.html",
+        session_row,
+        active_page="accounts",
+        accounts=accounts,
+        moderators=[
+            row
+            for row in accounts
+            if row["role"] == auth.ROLE_MODERATOR and int(row["id"]) != 1
+        ],
+    )
+
+
+@bp.post("/accounts/create")
+@auth.principal_required
+def account_create():
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    username = (request.form.get("username") or "").strip()
+    password = request.form.get("password") or ""
+    confirmation = request.form.get("confirmation") or ""
+    error = None
+    ok, error = auth.validate_username(username)
+    if ok:
+        ok, password_error = auth.validate_password(password)
+        if not ok:
+            error = password_error
+        elif password != confirmation:
+            ok, error = False, "Les deux mots de passe ne correspondent pas."
+    if ok:
+        row, error = auth.create_moderator(connection, username, password)
+        if row is not None:
+            current_app.logger.info("Comptes : modérateur créé (id=%s)", row["id"])
+            flash(f"Compte modérateur « {row['username']} » créé.", "success")
+            return redirect(url_for("admin.accounts_list"))
+    current_app.logger.info("Comptes : création de modérateur refusée")
+    flash(error or "Création impossible.", "error")
+    return redirect(url_for("admin.accounts_list"))
+
+
+@bp.post("/accounts/<int:user_id>/deactivate")
+@auth.principal_required
+def account_deactivate(user_id: int):
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    row = _account_target(connection, user_id)
+    auth.set_account_active(connection, user_id, False)
+    current_app.logger.info("Comptes : modérateur désactivé (id=%s)", user_id)
+    flash(f"Compte « {row['username']} » désactivé ; ses sessions sont révoquées.", "success")
+    return redirect(url_for("admin.accounts_list"))
+
+
+@bp.post("/accounts/<int:user_id>/reactivate")
+@auth.principal_required
+def account_reactivate(user_id: int):
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    row = _account_target(connection, user_id)
+    auth.set_account_active(connection, user_id, True)
+    current_app.logger.info("Comptes : modérateur réactivé (id=%s)", user_id)
+    flash(f"Compte « {row['username']} » réactivé.", "success")
+    return redirect(url_for("admin.accounts_list"))
+
+
+@bp.post("/accounts/<int:user_id>/delete")
+@auth.principal_required
+def account_delete(user_id: int):
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    row = _account_target(connection, user_id)
+    if request.form.get("confirm_delete") != "1":
+        flash("Suppression annulée : confirmation manquante.", "error")
+        return redirect(url_for("admin.accounts_list"))
+    auth.delete_account(connection, user_id)
+    current_app.logger.info("Comptes : modérateur supprimé (id=%s)", user_id)
+    flash(f"Compte « {row['username']} » supprimé ; ses sessions sont révoquées.", "success")
+    return redirect(url_for("admin.accounts_list"))
+
+
+@bp.post("/accounts/reset-password")
+@auth.principal_required
+def account_reset_password():
+    session_row = auth.require_session()
+    _require_csrf(session_row)
+    connection = auth.db_connection()
+    raw_id = (request.form.get("account_id") or "").strip()
+    if not raw_id.isdigit():
+        abort(404)
+    row = _account_target(connection, int(raw_id))
+    new_password = request.form.get("new_password") or ""
+    confirmation = request.form.get("confirmation") or ""
+    ok, error = auth.validate_password(new_password)
+    if ok and new_password != confirmation:
+        ok, error = False, "Les deux mots de passe ne correspondent pas."
+    if not ok:
+        flash(error, "error")
+        return redirect(url_for("admin.accounts_list"))
+    auth.update_password(connection, int(row["id"]), new_password)
+    auth.destroy_user_sessions(connection, int(row["id"]))
+    current_app.logger.info("Comptes : mot de passe réinitialisé (id=%s)", row["id"])
+    flash(
+        f"Mot de passe du compte « {row['username']} » réinitialisé ; "
+        "ses sessions sont révoquées.",
+        "success",
+    )
+    return redirect(url_for("admin.accounts_list"))

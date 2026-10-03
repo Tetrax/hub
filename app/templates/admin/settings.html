@@ -3,10 +3,11 @@
 <div class="admin-header">
   <div>
     <h1 class="admin-title">Paramètres</h1>
-    <p class="admin-sub">Préférences du portail et compte administrateur.</p>
+    <p class="admin-sub">{% if is_principal %}Préférences du portail et de votre compte.{% else %}Votre compte et votre mot de passe.{% endif %}</p>
   </div>
 </div>
 
+{% if is_principal %}
 <section class="panel">
   <h2 class="panel-title">Préférences du portail</h2>
   <form method="post" action="{{ url_for('admin.settings_preferences') }}">
@@ -21,14 +22,17 @@
     </div>
   </form>
 </section>
+{% endif %}
 
 <section class="panel">
-  <h2 class="panel-title">Compte administrateur</h2>
+  <h2 class="panel-title">Mon compte</h2>
   <dl class="kv">
     <dt>Identifiant</dt>
-    <dd>{{ admin_info['username'] if admin_info else '—' }}</dd>
+    <dd>{{ account_info['username'] if account_info else '—' }}</dd>
+    <dt>Rôle</dt>
+    <dd>{{ 'Administrateur principal' if is_principal else 'Modérateur' }}</dd>
     <dt>Mot de passe modifié le</dt>
-    <dd>{{ admin_info['password_changed_at'] if admin_info else '—' }}</dd>
+    <dd>{{ account_info['password_changed_at'] if account_info else '—' }}</dd>
   </dl>
   <form method="post" action="{{ url_for('admin.settings_password') }}">
     <input type="hidden" name="_csrf" value="{{ csrf }}">
@@ -50,12 +54,22 @@
                type="password" autocomplete="new-password" required minlength="12">
       </div>
     </div>
-    <p class="form-hint">La modification invalide toutes les sessions actives : vous serez reconnecté.</p>
+    <p class="form-hint">La modification invalide vos sessions actives : vous serez reconnecté(e).</p>
     <div class="form-actions">
       <button class="button" type="submit">Changer le mot de passe</button>
     </div>
   </form>
 </section>
+
+{% if is_principal %}
+<section class="panel">
+  <h2 class="panel-title">Comptes modérateurs</h2>
+  <p class="panel-sub">Les modérateurs gèrent le catalogue ; ils n'accèdent ni aux certificats, ni à la sécurité, ni aux comptes.</p>
+  <div class="form-actions">
+    <a class="button" href="{{ url_for('admin.accounts_list') }}">Gérer les comptes</a>
+  </div>
+</section>
+{% endif %}
 
 <section class="panel">
   <h2 class="panel-title">Informations</h2>

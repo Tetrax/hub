@@ -54,8 +54,8 @@ class _EchoServer(threading.Thread):
             pass
 
 
-def test_message_round_trip_via_socket(tmp_path):
-    socket_path = tmp_path / "helper.sock"
+def test_message_round_trip_via_socket(helper_socket_dir):
+    socket_path = helper_socket_dir / "helper.sock"
     server = _EchoServer(socket_path, {"ok": True, "value": 42})
     server.start()
     try:

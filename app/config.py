@@ -128,16 +128,21 @@ def ensure_secret_key(config: dict) -> str:
     from_env = os.environ.get("HUB_SECRET_KEY", "").strip()
     if from_env:
         return from_env
+    import fcntl
+
     key_file = Path(config["SECRET_KEY_FILE"])
-    if key_file.exists():
-        value = key_file.read_text(encoding="ascii").strip()
-        if value:
-            return value
-    value = secrets.token_urlsafe(48)
     key_file.parent.mkdir(parents=True, exist_ok=True)
-    key_file.write_text(value + "\n", encoding="ascii")
-    try:
+    # Premier boot multi-worker : ne jamais signer avec deux clés concurrentes.
+    # Le verrou couvre la lecture aussi (un fichier créé peut être encore vide).
+    with key_file.with_name(key_file.name + ".lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if key_file.exists():
+            value = key_file.read_text(encoding="ascii").strip()
+            if value:
+                return value
+        value = secrets.token_urlsafe(48)
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            stream.write(value + "\n")
         key_file.chmod(0o600)
-    except OSError:
-        pass
-    return value
+        return value

@@ -21,12 +21,17 @@ Variables :
                           déploiement standalone sans toucher /etc/hosts
     HUB_SHOTS_DIR         dossier de sortie des captures de validation
                           (par défaut /tmp/hub-acceptance)
+    HUB_MODERATOR_CHECK   `1` : rejoue le parcours comptes modérateurs (V1.7 —
+                          création, CRUD, refus sensibles, révocation, nettoyage).
+                          À réserver aux instances de recette isolées : le
+                          scénario crée puis supprime son compte et ses données.
 
 Le script ne journalise jamais le mot de passe utilisé et restaure l'état qu'il modifie.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import secrets
 import sys
@@ -42,6 +47,7 @@ ADMIN_PASSWORD = os.environ.get("HUB_ADMIN_PASSWORD", "")
 SCOPE = os.environ.get("HUB_SCOPE", "full").strip().lower()
 SKIP_CERT = os.environ.get("HUB_SKIP_CERT", "").strip() == "1"
 HOST_RESOLVER = os.environ.get("HUB_HOST_RESOLVER", "").strip()
+MODERATOR_CHECK = os.environ.get("HUB_MODERATOR_CHECK", "").strip() == "1"
 
 # Applications du catalogue initial : id en base → capture réelle.
 APP_SCREENSHOTS = {
@@ -54,6 +60,12 @@ APP_SCREENSHOTS = {
 
 DARK_BG = "#0b0b0d"
 LIGHT_BG = "#f6f6f8"
+
+# PNG 1×1 valide (magic bytes) pour la recette modérateur : capture téléversée
+# puis supprimée avec l'application de test.
+MODERATOR_CAPTURE_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 results: list[tuple[str, bool, str, bool]] = []
 
@@ -170,6 +182,168 @@ def catalog_view_state(page: Page) -> dict:
     )
 
 
+def moderator_scenario(browser, admin_page: Page) -> None:
+    """V1.7 : le principal crée un modérateur, il gère le catalogue, il est révoqué.
+
+    Rejoué uniquement avec `HUB_MODERATOR_CHECK=1` sur une instance isolée : le
+    scénario crée le compte, vérifie les permissions serveur, la révocation à la
+    désactivation, puis supprime le compte et les données de test.
+    """
+    username = "moderateur-recette"
+    moderator_password = secrets.token_urlsafe(18)
+    capture = SHOTS_DIR / "capture-moderateur.png"
+    capture.write_bytes(MODERATOR_CAPTURE_BYTES)
+
+    # 1) Le principal crée le compte modérateur.
+    admin_page.goto(f"{BASE_URL}/admin/accounts", wait_until="networkidle")
+    check(
+        "Comptes : page réservée au principal",
+        "Nouveau compte modérateur" in admin_page.content(),
+    )
+    admin_page.fill("#account-username", username)
+    admin_page.fill("#account-password", moderator_password)
+    admin_page.fill("#account-confirmation", moderator_password)
+    admin_page.get_by_role("button", name="Créer le compte").click()
+    admin_page.wait_for_load_state("networkidle")
+    check("Comptes : modérateur créé par le principal", username in admin_page.content())
+    admin_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-accounts-dark.png"))
+
+    moderator = browser.new_context(
+        viewport={"width": 1440, "height": 900}, locale="fr-FR", color_scheme="dark"
+    )
+    page = moderator.new_page()
+    try:
+        # 2) Connexion distincte : identité « modérateur », navigation sobre.
+        page.goto(f"{BASE_URL}/admin/login", wait_until="networkidle")
+        page.fill("#username", username)
+        page.fill("#password", moderator_password)
+        page.get_by_role("button", name="Se connecter").click()
+        page.wait_for_url("**/admin/", timeout=10000)
+        dashboard = page.content()
+        check("Modérateur : connexion distincte", "Tableau de bord" in dashboard)
+        check("Modérateur : rôle affiché sur le tableau de bord", "modérateur" in dashboard)
+        check(
+            "Modérateur : navigation sans configuration sensible",
+            'href="/admin/security"' not in dashboard
+            and 'href="/admin/certificates"' not in dashboard
+            and 'href="/admin/accounts"' not in dashboard
+            and "Certificat HTTPS" not in dashboard,
+        )
+        page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-moderator-dashboard-dark.png"))
+
+        # 3) CRUD catalogue : catégorie, site, capture.
+        page.goto(f"{BASE_URL}/admin/categories", wait_until="networkidle")
+        page.fill("#new-category-name", "Recette modérateur")
+        page.get_by_role("button", name="Ajouter").click()
+        page.wait_for_load_state("networkidle")
+        check("Modérateur : catégorie créée", "Recette modérateur" in page.content())
+
+        page.goto(f"{BASE_URL}/admin/apps/new", wait_until="networkidle")
+        page.fill("#name", "Site modérateur")
+        page.fill("#slug", "site-moderateur")
+        page.fill("#url", "https://moderateur.valdev.me")
+        page.select_option("#category_id", label="Recette modérateur")
+        page.get_by_role("button", name="Créer l'application").click()
+        page.wait_for_url("**/admin/apps", timeout=15000)
+        check("Modérateur : site créé", "Site modérateur" in page.content())
+
+        row = page.locator("tr", has_text="Site modérateur").first
+        edit_href = row.get_by_role("link", name="Modifier").get_attribute("href")
+        page.goto(f"{BASE_URL}{edit_href}", wait_until="networkidle")
+        page.set_input_files("#image", str(capture))
+        page.get_by_role("button", name="Enregistrer les modifications").click()
+        page.wait_for_url("**/admin/apps", timeout=15000)
+        page.goto(f"{BASE_URL}{edit_href}", wait_until="networkidle")
+        check(
+            "Modérateur : capture téléversée et affichée",
+            page.locator("img.thumb").count() == 1,
+        )
+        page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-moderator-app-form-dark.png"))
+
+        # 4) Accès sensibles refusés (URL directe et POST forgé).
+        for path in ("/admin/accounts", "/admin/certificates", "/admin/security"):
+            response = page.goto(f"{BASE_URL}{path}", wait_until="networkidle")
+            check(
+                f"Modérateur : {path} refusé (403)",
+                response is not None and response.status == 403,
+                f"statut={response.status if response else '?'}",
+            )
+        page.goto(f"{BASE_URL}/admin/settings", wait_until="networkidle")
+        check(
+            "Modérateur : paramètres = son compte seulement",
+            "Préférences du portail" not in page.content() and "Mon compte" in page.content(),
+        )
+        page.goto(f"{BASE_URL}/admin/", wait_until="networkidle")
+        forged = page.evaluate(
+            """async () => {
+                const response = await fetch('/admin/accounts/1/deactivate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                    body: '_csrf=forge',
+                });
+                return response.status;
+            }"""
+        )
+        check("Modérateur : POST forgé refusé (403)", forged == 403, f"statut={forged}")
+
+        # Rendus modérateur clair/mobile : mêmes tokens et navigation exploitable.
+        page.locator("[data-theme-toggle]").click()
+        check("Modérateur : thème clair", theme_state(page)["bgTop"] == LIGHT_BG)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(f"{BASE_URL}/admin/apps", wait_until="networkidle")
+        check(
+            "Modérateur mobile clair : navigation catalogue fonctionnelle",
+            page.get_by_role("link", name="Applications", exact=True).is_visible()
+            and page.evaluate(
+                "() => document.documentElement.scrollWidth <= document.documentElement.clientWidth"
+            ),
+        )
+        page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-moderator-mobile-light.png"))
+
+        # Suppression par le modérateur lui-même (pas seulement par le principal).
+        row = page.locator("tr", has_text="Site modérateur").first
+        page.once("dialog", lambda dialog: dialog.accept())
+        row.get_by_role("button", name="Supprimer").click()
+        page.wait_for_load_state("networkidle")
+        check("Modérateur : site supprimé", page.locator("tr", has_text="Site modérateur").count() == 0)
+        page.goto(f"{BASE_URL}/admin/categories", wait_until="networkidle")
+        row = page.locator("tr", has=page.locator("input[value='Recette modérateur']")).first
+        page.once("dialog", lambda dialog: dialog.accept())
+        row.get_by_role("button", name="Supprimer").click()
+        page.wait_for_load_state("networkidle")
+        check(
+            "Modérateur : catégorie supprimée",
+            page.locator("input[value='Recette modérateur']").count() == 0,
+        )
+
+        # 5) Désactivation : session existante révoquée immédiatement.
+        admin_page.goto(f"{BASE_URL}/admin/accounts", wait_until="networkidle")
+        row = admin_page.locator("tr", has_text=username).first
+        row.get_by_role("button", name="Désactiver").click()
+        admin_page.wait_for_load_state("networkidle")
+        check("Comptes : désactivation effectuée", "Désactivé" in admin_page.content())
+        page.goto(f"{BASE_URL}/admin/", wait_until="networkidle")
+        check("Modérateur : session révoquée après désactivation", page.url.endswith("/admin/login"))
+        page.fill("#username", username)
+        page.fill("#password", moderator_password)
+        page.get_by_role("button", name="Se connecter").click()
+        page.wait_for_load_state("networkidle")
+        check("Modérateur désactivé : connexion refusée", page.url.endswith("/admin/login"))
+
+        # 6) Nettoyage : compte, site, catégorie.
+        row = admin_page.locator("tr", has_text=username).first
+        admin_page.once("dialog", lambda dialog: dialog.accept())
+        row.get_by_role("button", name="Supprimer").click()
+        admin_page.wait_for_load_state("networkidle")
+        check(
+            "Comptes : suppression du compte de recette",
+            admin_page.locator("tr", has_text=username).count() == 0,
+        )
+
+    finally:
+        moderator.close()
+
+
 def main() -> int:
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     password = ADMIN_PASSWORD or secrets.token_urlsafe(24)
@@ -252,7 +426,7 @@ def main() -> int:
                     "Sécurité : lien présent dans la navigation admin",
                     page.locator("a[href='/admin/security']").count() >= 1,
                 )
-                page.screenshot(path=str(SHOTS_DIR / "hub-admin-security.png"))
+                page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-security.png"))
                 page.goto(f"{BASE_URL}/admin/security/vulnerabilities", wait_until="networkidle")
                 check(
                     "Sécurité : page des vulnérabilités rendue",
@@ -271,7 +445,7 @@ def main() -> int:
             state["attribute"] is None and state["prefersDark"] and state["bgTop"] == DARK_BG,
             f"attribut={state['attribute']} préférence sombre={state['prefersDark']}",
         )
-        dark_page.screenshot(path=str(SHOTS_DIR / "hub-landing-dark-desktop.png"))
+        dark_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-landing-dark-desktop.png"))
 
         theme_light = browser.new_context(
             viewport={"width": 1440, "height": 900}, locale="fr-FR", color_scheme="light"
@@ -284,7 +458,7 @@ def main() -> int:
             state["attribute"] is None and not state["prefersDark"] and state["bgTop"] == LIGHT_BG,
             f"préférence sombre={state['prefersDark']} bg={state['bgTop']}",
         )
-        light_page.screenshot(path=str(SHOTS_DIR / "hub-landing-light-desktop.png"))
+        light_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-landing-light-desktop.png"))
 
         # Bascule manuelle depuis le thème sombre
         toggle = dark_page.locator("[data-theme-toggle]")
@@ -297,7 +471,7 @@ def main() -> int:
             state["attribute"] == "light" and state["stored"] == "light" and state["bgTop"] == LIGHT_BG,
             f"attribut={state['attribute']} stored={state['stored']}",
         )
-        dark_page.screenshot(path=str(SHOTS_DIR / "hub-landing-light-forced.png"))
+        dark_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-landing-light-forced.png"))
 
         # Persistance : rechargement, navigation vers l'admin, retour au portail
         dark_page.reload(wait_until="networkidle")
@@ -368,7 +542,7 @@ def main() -> int:
             mpage_light.locator("[data-theme-toggle]").count() == 1,
         )
         check_hero_visual(mpage_light, "mobile clair")
-        mpage_light.screenshot(path=str(SHOTS_DIR / "hub-landing-light-mobile.png"))
+        mpage_light.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-landing-light-mobile.png"))
 
         # Vue Liste sur mobile clair : aucune capture, pas de débordement.
         before_light = catalog_view_state(mpage_light)
@@ -388,7 +562,7 @@ def main() -> int:
             state["listImages"] == 0 and 0 < state["listHeight"] < before_light["cardsHeight"],
             f"liste={state['listHeight']}px cartes={before_light['cardsHeight']}px",
         )
-        mpage_light.screenshot(path=str(SHOTS_DIR / "hub-mobile-light-list.png"))
+        mpage_light.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-mobile-light-list.png"))
 
         # --- Transfert des captures d'applications (mode complet seulement) ----
         if admin_ready and APPS_SHOTS:
@@ -429,7 +603,7 @@ def main() -> int:
             check("Landing : screenshots chargés", all(images), f"{len(images)} images")
         else:
             check("Landing : screenshots chargés", False, "aucune image", skipped=True)
-        page.screenshot(path=str(SHOTS_DIR / "hub-desktop-dark.png"))
+        page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-desktop-dark.png"))
 
         # Recherche (amélioration progressive JS)
         if page.locator("[data-filter='search']").count():
@@ -538,7 +712,7 @@ def main() -> int:
             f"attribut={early['attribute']}",
         )
         page.wait_for_timeout(250)
-        page.screenshot(path=str(SHOTS_DIR / "hub-desktop-dark-list.png"))
+        page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-desktop-dark-list.png"))
 
         # Filtres de catégories : même moteur en vue Liste.
         chips = page.locator("[data-category-chip]")
@@ -574,7 +748,7 @@ def main() -> int:
             state["attribute"] == "list" and state["listVisible"] and theme["bgTop"] == LIGHT_BG,
             f"fond={theme['bgTop']}",
         )
-        light_page.screenshot(path=str(SHOTS_DIR / "hub-desktop-light-list.png"))
+        light_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-desktop-light-list.png"))
 
         # Changement de thème sans quitter la vue Liste.
         light_page.locator("[data-theme-toggle]").click()
@@ -586,7 +760,7 @@ def main() -> int:
             theme["attribute"] == "dark" and state["attribute"] == "list" and state["listVisible"],
             f"thème={theme['attribute']} vue={state['attribute']}",
         )
-        light_page.screenshot(path=str(SHOTS_DIR / "hub-desktop-dark-list-forced.png"))
+        light_page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-desktop-dark-list-forced.png"))
 
         # Bascule de vue pilotable au clavier, état actif exposé (aria-pressed).
         light_page.locator("[data-view-button='cards']").focus()
@@ -621,7 +795,7 @@ def main() -> int:
             brand["present"] and brand["lines"] == 1 and brand["centered"] and bool(brand["text"]),
             f"« {brand.get('text', '')} » sur {brand.get('lines')} ligne(s)",
         )
-        mpage.screenshot(path=str(SHOTS_DIR / "hub-mobile-dark.png"))
+        mpage.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-mobile-dark.png"))
 
         # Vue Liste sur mobile sombre : lignes compactes, aucune capture.
         before_mobile = catalog_view_state(mpage)
@@ -641,7 +815,7 @@ def main() -> int:
             state["listImages"] == 0 and 0 < state["listHeight"] < before_mobile["cardsHeight"],
             f"liste={state['listHeight']}px cartes={before_mobile['cardsHeight']}px",
         )
-        mpage.screenshot(path=str(SHOTS_DIR / "hub-mobile-dark-list.png"))
+        mpage.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-mobile-dark-list.png"))
 
         # --- Administration (mode complet, session requise) --------------------
         if admin_ready:
@@ -654,10 +828,10 @@ def main() -> int:
             )
             page.goto(f"{BASE_URL}/admin/apps", wait_until="networkidle")
             check("Admin : liste des applications", page.locator("table.admin-table").count() >= 1)
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-apps-dark.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-apps-dark.png"))
 
             page.goto(f"{BASE_URL}/admin/", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-dashboard-dark.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-dashboard-dark.png"))
 
             page.goto(f"{BASE_URL}/admin/certificates", wait_until="networkidle")
             cert_content = page.content()
@@ -712,7 +886,7 @@ def main() -> int:
                 page.locator("#panel-pkcs12").is_visible()
                 and not page.locator("#panel-pem").is_visible(),
             )
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-certificates-dark.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-certificates-dark.png"))
 
             # --- Catégories : création, doublon, renommage, suppression --------
             page.goto(f"{BASE_URL}/admin/categories", wait_until="networkidle")
@@ -722,7 +896,7 @@ def main() -> int:
                 "Catégories : repli protégé et compteurs affichés",
                 "Catégorie de repli" in categories_content and "application" in categories_content,
             )
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-categories-dark.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-categories-dark.png"))
 
             page.fill("#new-category-name", "Recette")
             page.get_by_role("button", name="Ajouter").click()
@@ -761,7 +935,7 @@ def main() -> int:
                 "Catégories : création rapide sans perte de saisie",
                 page.input_value("#name") == "Application de recette",
             )
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-app-form-dark.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-app-form-dark.png"))
             page.get_by_role("button", name="Créer l'application").click()
             page.wait_for_url("**/admin/apps", timeout=15000)
             created = "Application de recette" in page.content()
@@ -808,16 +982,27 @@ def main() -> int:
                 f"attribut={state['attribute']}",
             )
             page.goto(f"{BASE_URL}/admin/apps", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-apps-light.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-apps-light.png"))
             page.goto(f"{BASE_URL}/admin/apps/new", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-app-form-light.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-app-form-light.png"))
             page.goto(f"{BASE_URL}/admin/categories", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-categories-light.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-categories-light.png"))
             page.goto(f"{BASE_URL}/admin/certificates", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-certificates-light.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-certificates-light.png"))
             page.goto(f"{BASE_URL}/admin/", wait_until="networkidle")
-            page.screenshot(path=str(SHOTS_DIR / "hub-admin-dashboard-light.png"))
+            page.screenshot(timeout=120000, animations="disabled", path=str(SHOTS_DIR / "hub-admin-dashboard-light.png"))
             check("Admin : pages parcourues en thème clair", theme_state(page)["attribute"] == "light")
+
+            # --- Comptes modérateurs (V1.7, instance isolée uniquement) ---------
+            if MODERATOR_CHECK:
+                moderator_scenario(browser, page)
+            else:
+                check(
+                    "Comptes modérateurs : parcours dédié",
+                    True,
+                    "HUB_MODERATOR_CHECK non activé",
+                    skipped=True,
+                )
 
             # Masquer / afficher
             page.goto(f"{BASE_URL}/admin/apps", wait_until="networkidle")

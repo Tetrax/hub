@@ -6,6 +6,7 @@ portent sur les règles de l'ingestion (D22), pas sur le réseau.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import threading
 import time
@@ -20,6 +21,17 @@ RUN_A = "1001"
 RUN_B = "1002"
 
 
+def ago(**delta) -> str:
+    """Horodatage UTC récent, relatif au présent réel.
+
+    La fraîcheur (seuil 48 h) et l'ordre des scans se comparent au présent :
+    des dates fixes en dur deviennent « périmées » avec le temps. `ago(hours=3)`
+    signifie « il y a trois heures », quel que soit le jour d'exécution.
+    """
+    moment = dt.datetime.now(dt.timezone.utc) - dt.timedelta(**delta)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _finding(cve: str, package: str, severity: str, installed: str = "1.0", fixed: str = "1.1") -> dict:
     return {
         "VulnerabilityID": cve,
@@ -30,12 +42,12 @@ def _finding(cve: str, package: str, severity: str, installed: str = "1.0", fixe
     }
 
 
-def payload(findings: list[dict], *, created: str = "2026-09-17T05:24:00Z") -> dict:
+def payload(findings: list[dict], *, created: str | None = None) -> dict:
     return {
         "SchemaVersion": 2,
         "ArtifactType": "container_image",
         "ArtifactName": "hub:ci-scan",
-        "CreatedAt": created,
+        "CreatedAt": created or ago(hours=5),
         "Results": [
             # Copie défensive : un test qui altère un payload ne doit jamais polluer
             # les constantes partagées entre tests.
@@ -46,8 +58,9 @@ def payload(findings: list[dict], *, created: str = "2026-09-17T05:24:00Z") -> d
 
 
 def use_github(monkeypatch, report: dict, *, run_id: str = RUN_A, commit: str = COMMIT_A,
-               started: str = "2026-09-17T05:23:00Z", delay: float = 0.0) -> bytes:
+               started: str | None = None, delay: float = 0.0) -> bytes:
     raw = json.dumps(report).encode()
+    started_at = started or ago(hours=5)
 
     def _run(_token):
         if delay:
@@ -56,7 +69,7 @@ def use_github(monkeypatch, report: dict, *, run_id: str = RUN_A, commit: str = 
             run_id=run_id,
             commit=commit,
             run_url=f"https://github.com/Tetrax/hub/actions/runs/{run_id}",
-            started_at=started,
+            started_at=started_at,
         )
 
     monkeypatch.setattr(trivy_github, "latest_successful_run", _run)
@@ -256,10 +269,10 @@ def test_the_mission_delta_scenario_produces_one_email(app, monkeypatch):
     ]
     use_github(
         monkeypatch,
-        payload(second, created="2026-09-18T05:24:00Z"),
+        payload(second, created=ago(hours=3)),
         run_id=RUN_B,
         commit=COMMIT_B,
-        started="2026-09-18T05:23:00Z",
+        started=ago(hours=3),
     )
     result = trivy_monitor.sync(app)
 
@@ -287,10 +300,10 @@ def test_installed_or_fixed_version_changes_are_silent(app, monkeypatch):
     ]
     use_github(
         monkeypatch,
-        payload(refreshed, created="2026-09-18T05:24:00Z"),
+        payload(refreshed, created=ago(hours=3)),
         run_id=RUN_B,
         commit=COMMIT_B,
-        started="2026-09-18T05:23:00Z",
+        started=ago(hours=3),
     )
     result = trivy_monitor.sync(app)
     assert result.changed
@@ -345,7 +358,7 @@ def test_an_older_run_is_refused_and_the_baseline_kept(app, monkeypatch):
         payload([_finding("CVE-2026-0009", "x", "high")]),
         run_id="999",
         commit=COMMIT_B,
-        started="2026-09-01T05:23:00Z",
+        started=ago(days=30),
     )
     result = trivy_monitor.sync(app)
     assert not result.ok and "plus ancien" in result.message
@@ -362,10 +375,10 @@ def test_a_report_with_an_older_scan_date_is_refused(app, monkeypatch):
     before = state_of(app)
     use_github(
         monkeypatch,
-        payload([_finding("CVE-2026-0009", "x", "high")], created="2026-08-01T00:00:00Z"),
+        payload([_finding("CVE-2026-0009", "x", "high")], created=ago(days=30)),
         run_id=RUN_B,
         commit=COMMIT_B,
-        started="2026-09-18T05:23:00Z",
+        started=ago(hours=3),
     )
     result = trivy_monitor.sync(app)
     assert not result.ok and "scan est plus ancien" in result.message
@@ -404,7 +417,7 @@ def test_an_invalid_report_is_refused_entirely(app, monkeypatch):
 
     broken = payload(BASELINE)
     broken["Results"][0]["Vulnerabilities"][0]["Severity"] = "medium"
-    use_github(monkeypatch, broken, run_id=RUN_B, commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, broken, run_id=RUN_B, commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert not result.ok and "refusé" in result.message
     assert state_of(app)["report_sha256"] == before["report_sha256"]
@@ -430,8 +443,8 @@ def test_a_smtp_failure_does_not_roll_back_the_baseline(app, monkeypatch):
     trivy_monitor.sync(app)
 
     second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.ok, "la synchronisation reste réussie même si l'email échoue"
     assert "email a échoué" in result.message
@@ -443,8 +456,8 @@ def test_a_smtp_failure_does_not_roll_back_the_baseline(app, monkeypatch):
 
     # La CVE déjà connue n'est PAS re-notifiée à la synchronisation suivante.
     third = second + [_finding("CVE-2026-0005", "zlib", "high")]
-    use_github(monkeypatch, payload(third, created="2026-09-19T05:24:00Z"), run_id="1003",
-               commit="c" * 40, started="2026-09-19T05:23:00Z")
+    use_github(monkeypatch, payload(third, created=ago(hours=1)), run_id="1003",
+               commit="c" * 40, started=ago(hours=1))
     trivy_monitor.sync(app)
     assert calls[-1]["events"][0]["detail"]["cve"] == "CVE-2026-0005"
 
@@ -455,8 +468,8 @@ def test_a_failed_notification_can_be_retried(app, monkeypatch):
     use_github(monkeypatch, payload(BASELINE))
     trivy_monitor.sync(app)
     second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     trivy_monitor.sync(app)
 
     capture_emails(monkeypatch, ok=True)
@@ -487,8 +500,8 @@ def test_a_severity_outside_the_followed_set_is_not_notified(app, monkeypatch):
         _finding("CVE-2026-0001", "gzip", "high"),
         _finding("CVE-2026-0002", "perl-base", "critical"),
     ]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.changed
     assert kinds_of(app) == ["baseline", "new"], "l'événement HIGH est enregistré..."
@@ -504,8 +517,8 @@ def test_notification_types_are_switchable(app, monkeypatch):
     use_github(monkeypatch, payload([_finding("CVE-2026-0001", "gzip", "high")]))
     trivy_monitor.sync(app)
     second = [_finding("CVE-2026-0002", "perl-base", "critical")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.changed and emails == []
     assert kinds_of(app) == ["baseline", "new", "resolved"]
@@ -513,8 +526,8 @@ def test_notification_types_are_switchable(app, monkeypatch):
     # Réactivation des nouveaux uniquement : l'événement suivant repart par email.
     enable(app, notify_new="1", notify_resolved="0")
     third = second + [_finding("CVE-2026-0003", "zlib", "high")]
-    use_github(monkeypatch, payload(third, created="2026-09-19T05:24:00Z"), run_id="1003",
-               commit="c" * 40, started="2026-09-19T05:23:00Z")
+    use_github(monkeypatch, payload(third, created=ago(hours=1)), run_id="1003",
+               commit="c" * 40, started=ago(hours=1))
     trivy_monitor.sync(app)
     assert len(emails) == 1
     assert [event["kind"] for event in emails[0]["events"]] == ["new"]
@@ -526,8 +539,8 @@ def test_notifications_disabled_still_updates_the_state(app, monkeypatch):
     use_github(monkeypatch, payload(BASELINE))
     trivy_monitor.sync(app)
     second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.changed and emails == []
     assert [event["notification_status"] for event in events_of(app)][0] == "none"
@@ -585,7 +598,7 @@ def test_freshness_and_next_sync(app, monkeypatch):
     trivy_monitor.sync(app)
     state = state_of(app)
     assert trivy_monitor.freshness(state) == "fresh"
-    stale = dict(state, scan_at="2026-09-01T00:00:00Z")
+    stale = dict(state, scan_at=ago(days=5))
     assert trivy_monitor.freshness(stale) == "stale"
     assert trivy_monitor.next_sync_at(state) is not None
 
@@ -615,8 +628,8 @@ def test_a_delta_email_can_use_the_microsoft365_transport(app, monkeypatch):
     assert fake.requests == [], "aucun email pour la baseline"
 
     second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.ok and result.notified == 1
     sent = json.loads(fake.requests[-1].data.decode("utf-8"))
@@ -639,8 +652,8 @@ def test_an_incomplete_transport_never_breaks_the_ingestion(app, monkeypatch):
     trivy_monitor.sync(app)
 
     second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-    use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-               commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+    use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+               commit=COMMIT_B, started=ago(hours=3))
     result = trivy_monitor.sync(app)
     assert result.ok, "l'ingestion n'échoue jamais à cause du transport"
     assert "Transport email incomplet" in result.message
@@ -649,8 +662,8 @@ def test_an_incomplete_transport_never_breaks_the_ingestion(app, monkeypatch):
     assert "Transport email incomplet" in state["last_notification_error"]
     # La baseline a bien avancé : la CVE connue n'est pas re-notifiée ensuite.
     third = second + [_finding("CVE-2026-0005", "zlib", "high")]
-    use_github(monkeypatch, payload(third, created="2026-09-19T05:24:00Z"), run_id="1003",
-               commit="c" * 40, started="2026-09-19T05:23:00Z")
+    use_github(monkeypatch, payload(third, created=ago(hours=1)), run_id="1003",
+               commit="c" * 40, started=ago(hours=1))
     trivy_monitor.sync(app)
     failed = [event["summary"] for event in events_of(app) if event["notification_status"] == "failed"]
     # `recent_events` liste du plus récent au plus ancien : une seule entrée par
@@ -683,8 +696,8 @@ def test_a_v16_configuration_migrates_without_loss(app, monkeypatch):
         use_github(monkeypatch, payload(BASELINE))
         trivy_monitor.sync(app)
         second = BASELINE + [_finding("CVE-2026-0004", "libpcre2-8-0", "high")]
-        use_github(monkeypatch, payload(second, created="2026-09-18T05:24:00Z"), run_id=RUN_B,
-                   commit=COMMIT_B, started="2026-09-18T05:23:00Z")
+        use_github(monkeypatch, payload(second, created=ago(hours=3)), run_id=RUN_B,
+                   commit=COMMIT_B, started=ago(hours=3))
         result = trivy_monitor.sync(app)
         assert result.ok and result.notified == 1
         assert len(server.messages) == 1

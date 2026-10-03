@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
 import struct
 import sys
+import tempfile
 import threading
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -306,7 +308,23 @@ class FakeNginx:
 
 
 @pytest.fixture()
-def helper(tmp_path):
+def helper_socket_dir():
+    """Répertoire court dédié aux sockets Unix du helper.
+
+    `tmp_path` peut être profond (répertoire temporaire de pytest sous un
+    TMPDIR long) et dépasser la limite AF_UNIX (~108 octets). Le socket vit
+    donc dans un répertoire court créé sous TMPDIR (scratch en test local) ;
+    les données du helper (staging, paire active) restent dans `tmp_path`.
+    """
+    directory = Path(tempfile.mkdtemp(prefix="hub-sock-"))
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+@pytest.fixture()
+def helper(tmp_path, helper_socket_dir):
     """Helper réel exposé par une vraie socket Unix, avec Nginx simulé."""
     import hub_cert_helper
 
@@ -322,7 +340,7 @@ def helper(tmp_path):
         allowed_gid=os.getgid(),
         nginx=nginx,
     )
-    socket_path = base / "helper.sock"
+    socket_path = helper_socket_dir / "helper.sock"
     server = hub_cert_helper.CertHelperServer(socket_path, processor, socket_gid=None)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

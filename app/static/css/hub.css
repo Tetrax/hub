@@ -516,7 +516,10 @@ a { color: inherit; text-decoration: none; }
 }
 .admin-nav button.nav-link-button:hover { color: var(--danger); background: var(--danger-bg); }
 
-.admin-main { padding: 2rem 2.2rem 3rem; max-width: 1080px; }
+/* L'item de grille doit rétrécir : les tables défilent dans leur panneau,
+   sans imposer leur largeur intrinsèque à la page (notamment sur mobile). */
+.admin-main { min-width: 0; padding: 2rem 2.2rem 3rem; max-width: 1080px; }
+.admin-main .panel { overflow-x: auto; }
 .admin-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.8rem; margin-bottom: 1.6rem; }
 .admin-title { margin: 0; font-size: 1.5rem; font-weight: 620; }
 .admin-sub { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.9rem; }

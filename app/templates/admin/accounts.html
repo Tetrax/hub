@@ -1,0 +1,134 @@
+{% extends "admin/base_admin.html" %}
+{% block admin_content %}
+<div class="admin-header">
+  <div>
+    <h1 class="admin-title">Comptes</h1>
+    <p class="admin-sub">Comptes modérateurs du Hub — créés, désactivés et supprimés par l'administrateur principal.</p>
+  </div>
+  <a class="button button-ghost" href="{{ url_for('admin.settings') }}">Paramètres</a>
+</div>
+
+<section class="panel">
+  <h2 class="panel-title">Nouveau compte modérateur</h2>
+  <form method="post" action="{{ url_for('admin.account_create') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="account-username">Identifiant (3 à 64 caractères)</label>
+        <input class="input" id="account-username" name="username" type="text"
+               autocomplete="off" required minlength="3" maxlength="64">
+      </div>
+      <div class="form-field"></div>
+      <div class="form-field">
+        <label class="form-label" for="account-password">Mot de passe (12 octets min.)</label>
+        <input class="input" id="account-password" name="password" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="account-confirmation">Confirmation</label>
+        <input class="input" id="account-confirmation" name="confirmation" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+    </div>
+    <p class="form-hint">Le compte modérateur accède au catalogue (applications, captures, catégories) — jamais aux certificats, à la sécurité, aux préférences globales ni aux autres comptes.</p>
+    <div class="form-actions">
+      <button class="button button-primary" type="submit">Créer le compte</button>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <h2 class="panel-title">Comptes existants</h2>
+  <table class="admin-table">
+    <thead>
+      <tr>
+        <th scope="col">Identifiant</th>
+        <th scope="col">Rôle</th>
+        <th scope="col">État</th>
+        <th scope="col">Créé le</th>
+        <th scope="col">Mot de passe modifié le</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for account in accounts %}
+      <tr>
+        <td>
+          <strong>{{ account['username'] }}</strong>
+          {% if account['id'] == 1 %}<span class="cell-tag">principal</span>{% endif %}
+        </td>
+        <td>{{ 'Administrateur principal' if account['role'] == 'admin' else 'Modérateur' }}</td>
+        <td>
+          {% if account['is_active'] %}
+          <span class="state-pill state-valid">Actif</span>
+          {% else %}
+          <span class="state-pill state-expired">Désactivé</span>
+          {% endif %}
+        </td>
+        <td class="cell-muted">{{ account['created_at'] }}</td>
+        <td class="cell-muted">{{ account['password_changed_at'] }}</td>
+        <td>
+          {% if account['id'] == 1 or account['role'] != 'moderator' %}
+          <span class="cell-muted">—</span>
+          {% else %}
+          <div class="row-actions">
+            {% if account['is_active'] %}
+            <form method="post" action="{{ url_for('admin.account_deactivate', user_id=account['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <button class="button button-small" type="submit">Désactiver</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('admin.account_reactivate', user_id=account['id']) }}">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <button class="button button-small" type="submit">Réactiver</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('admin.account_delete', user_id=account['id']) }}"
+                  data-confirm="Supprimer définitivement le compte « {{ account['username'] }} » ?">
+              <input type="hidden" name="_csrf" value="{{ csrf }}">
+              <input type="hidden" name="confirm_delete" value="1">
+              <button class="button button-small button-danger" type="submit">Supprimer</button>
+            </form>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if moderators %}
+<section class="panel">
+  <h2 class="panel-title">Réinitialiser un mot de passe</h2>
+  <p class="panel-sub">La réinitialisation invalide immédiatement les sessions du compte concerné.</p>
+  <form method="post" action="{{ url_for('admin.account_reset_password') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf }}">
+    <div class="form-grid">
+      <div class="form-field">
+        <label class="form-label" for="reset-account">Compte modérateur</label>
+        <select class="input" id="reset-account" name="account_id" required>
+          {% for account in moderators %}
+          <option value="{{ account['id'] }}">{{ account['username'] }}{% if not account['is_active'] %} (désactivé){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-field"></div>
+      <div class="form-field">
+        <label class="form-label" for="reset-password">Nouveau mot de passe (12 octets min.)</label>
+        <input class="input" id="reset-password" name="new_password" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+      <div class="form-field">
+        <label class="form-label" for="reset-confirmation">Confirmation</label>
+        <input class="input" id="reset-confirmation" name="confirmation" type="password"
+               autocomplete="new-password" required minlength="12">
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="button" type="submit">Réinitialiser le mot de passe</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+{% endblock %}
