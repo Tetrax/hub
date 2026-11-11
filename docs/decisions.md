@@ -954,6 +954,52 @@ pillow 13.0.0, pygments 2.21.0.
   nullable par choix (compatibilité de rollback, D25) ; `load_session` refuse un
   `user_id` NULL.
 
-**Traité à part (authentification, revue indépendante).** Verrouillage de
+**Traité à part (authentification, revue indépendante) : D27.** Verrouillage de
 connexion par nom d'utilisateur (déni de service sur le compte principal), course
 entre contrôle et incrément du verrou, et premier démarrage sans jeton.
+
+
+## D27 — Authentification : verrouillage par couple identifiant + IP et jeton de premier démarrage
+
+**Contexte.** Le scan de sécurité de novembre 2026 (D26) relève trois points :
+(1) le verrou après 5 échecs portait sur l'identifiant seul — n'importe qui
+pouvait bloquer le compte principal pendant 15 min, indéfiniment, et
+`reset-admin` ne levait pas ce verrou ; (2) le contrôle du verrou précédait la
+transaction, si bien que des essais simultanés dépassaient le seuil ; (3) tant
+qu'aucun compte n'existe, le premier visiteur de `/admin/setup` devenait
+administrateur — sans conséquence derrière l'allowlist du VPS, mais réel en
+standalone (443 publié sur toutes les interfaces).
+
+**Décision.**
+
+- **Trois compteurs** sur une fenêtre glissante de 15 min, verrou de 15 min :
+  couple identifiant + IP (5 échecs), IP seule (20), identifiant seul (100). Un
+  tiers ne bloque que sa propre adresse ; une adresse qui essaie de nombreux
+  identifiants est freinée ; une attaque répartie sur un compte reste bornée sans
+  offrir un déni de service à 5 essais. L'IP est celle de `client_ip`
+  (frontière proxy explicite `HUB_TRUSTED_PROXY_CIDRS`) ; un succès lève les trois compteurs.
+- **Atomicité** : contrôle du verrou, vérification du mot de passe et
+  enregistrement de l'échec (ou création de session) dans la même transaction
+  `BEGIN IMMEDIATE`.
+- **`reset-admin`** lève tous les verrous (reprise opérateur).
+- **Jeton de premier démarrage** : généré au démarrage tant qu'aucun compte
+  principal n'existe, stocké comme un secret (`secrets/setup-token`, 0600,
+  écriture atomique, `secretstore`) mais **hors** des secrets administrables
+  (ni affiché ni supprimable dans Sécurité). `/admin/setup` l'exige (comparaison
+  à temps constant, refus 403) ; il est supprimé à la création du compte. Lecture
+  par l'opérateur uniquement : `python -m app.manage setup-token` dans le
+  conteneur (console Portainer en standalone). Les journaux indiquent la commande,
+  jamais le jeton.
+
+**Alternatives.** Verrou par IP seule : rejeté — aucune borne contre une attaque
+répartie. Jeton affiché dans les journaux (façon Jupyter) : rejeté — contraire à
+« aucun secret dans un log ». Jeton imposé par variable d'environnement :
+rejeté — un secret de plus à gérer dans Portainer pour un usage unique.
+Création du compte par CLI uniquement : rejeté — la procédure standalone doit
+rester faisable depuis l'interface Portainer.
+
+**Conséquences / rollback.** Aucune migration de schéma (mêmes colonnes de
+`login_attempts`, nouvelles clés `pair:`/`ip:`/`user:`). Les anciennes clés
+`user:` restent lues comme le compteur global. Une instance déjà configurée
+n'est pas concernée par le jeton. Retour arrière : l'image précédente ignore le
+fichier `secrets/setup-token` et les clés `pair:`.

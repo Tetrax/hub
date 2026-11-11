@@ -110,8 +110,17 @@ check "aucun ACME ni requête sortante dans les journaux" \
 
 echo
 echo "### Phase 4 — administration : compte et état du certificat"
+# Jeton de premier démarrage : lu dans le conteneur (console Portainer en vrai).
+SETUP_TOKEN=$(compose exec -T web python -m app.manage setup-token 2>/dev/null | tail -n 1)
+[ -n "$SETUP_TOKEN" ] && ok "jeton de premier démarrage lisible dans le conteneur" \
+  || ko "jeton de premier démarrage lisible dans le conteneur"
+check "jeton absent des journaux du conteneur" "! docker logs $(web_container) 2>&1 | grep -qF -- '$SETUP_TOKEN'"
 CSRF=$(curl -k -s -c "$COOKIES" $RESOLVE "$BASE_URL/admin/setup" | grep -o 'name="_csrf" value="[^"]*"' | head -1 | cut -d'"' -f4)
+check_eq "setup sans jeton refusé" "403" "$(curl -k -s -b "$COOKIES" -c "$COOKIES" $RESOLVE -o /dev/null -w '%{http_code}' \
+  -X POST "$BASE_URL/admin/setup" --data-urlencode "_csrf=$CSRF" --data-urlencode "username=intrus" \
+  --data-urlencode "password=$ADMIN_PASSWORD" --data-urlencode "confirmation=$ADMIN_PASSWORD")"
 curl -k -s -b "$COOKIES" -c "$COOKIES" $RESOLVE -X POST "$BASE_URL/admin/setup" \
+  --data-urlencode "setup_token=$SETUP_TOKEN" \
   --data-urlencode "_csrf=$CSRF" --data-urlencode "username=admin" \
   --data-urlencode "password=$ADMIN_PASSWORD" --data-urlencode "confirmation=$ADMIN_PASSWORD" >/dev/null
 PAGE=$(curl -k -s -b "$COOKIES" -c "$COOKIES" $RESOLVE "$BASE_URL/admin/certificates")

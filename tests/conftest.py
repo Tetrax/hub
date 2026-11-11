@@ -204,12 +204,21 @@ def login(client, app, username: str = ADMIN_USERNAME, password: str = ADMIN_PAS
 
 
 def setup_admin(client, app, username: str = ADMIN_USERNAME, password: str = ADMIN_PASSWORD):
+    """Première configuration via HTTP, avec le jeton lu comme le ferait l'opérateur."""
+    from app import auth
+
     client.get("/admin/setup")
     with client.session_transaction() as flask_session:
         preauth = flask_session.get("preauth_csrf")
     return client.post(
         "/admin/setup",
-        data={"username": username, "password": password, "confirmation": password, "_csrf": preauth},
+        data={
+            "username": username,
+            "password": password,
+            "confirmation": password,
+            "_csrf": preauth,
+            "setup_token": auth.ensure_setup_token(app.config["DATA_DIR"]),
+        },
         follow_redirects=False,
     )
 

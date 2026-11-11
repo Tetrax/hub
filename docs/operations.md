@@ -84,7 +84,16 @@ journalctl -u hub-cert-helper -n 50 --no-pager
 
 - **Première configuration** : ouvrir `https://hub.valdev.me/admin` depuis une
   IP autorisée ; tant qu'aucun compte n'existe, la page crée le **compte
-  principal** (aucun mot de passe par défaut, minimum 12 octets).
+  principal** (aucun mot de passe par défaut, minimum 12 octets). Elle exige le
+  **jeton de premier démarrage** (D27), lisible uniquement dans le conteneur :
+  `docker compose exec web python -m app.manage setup-token` (ou la console
+  Portainer du conteneur). Le jeton n'apparaît jamais dans les journaux et
+  disparaît dès la création du compte.
+- **Verrouillage des connexions** : 5 échecs pour un même identifiant depuis une
+  même IP, 20 échecs depuis une même IP (tous identifiants) ou 100 échecs sur un
+  même identifiant (toutes IP) en 15 min bloquent pendant 15 min la clé
+  concernée. Un tiers ne bloque donc que sa propre adresse, pas l'administrateur
+  connecté d'ailleurs. `reset-admin` lève tous les verrous.
 - **Administrateur principal** (rôle `admin`, id = 1) : unique, non supprimable,
   non désactivable, non rétrogradable ; il gère tout — comptes modérateurs,
   certificats, sécurité/alertes/secrets, préférences du portail.
@@ -98,8 +107,8 @@ journalctl -u hub-cert-helper -n 50 --no-pager
 docker compose exec web python -m app.manage reset-admin
 ```
 
-  Cible le compte principal ; toutes les sessions actives sont invalidées par
-  cette commande.
+  Cible le compte principal ; toutes les sessions actives sont invalidées et les
+  verrous de connexion levés par cette commande.
 - **Changement courant** : `/admin/paramètres` (exige le mot de passe actuel) ;
   chaque compte ne révoque que ses propres sessions.
 
@@ -240,7 +249,9 @@ Procédure complète, **sans SSH** :
 
 1. ouvrir `https://<HUB_HOSTNAME>` (accepter l'avertissement du certificat
    temporaire) ;
-2. créer le compte administrateur (`/admin/setup`) ;
+2. lire le jeton de premier démarrage dans la **console du conteneur**
+   (Portainer → conteneur → *Console*) : `python -m app.manage setup-token`,
+   puis créer le compte administrateur (`/admin/setup`) ;
 3. **Administration → Certificats** → sélectionner le **PKCS#12** fourni par la
    PKI, saisir son mot de passe → *Valider* ;
 4. vérifier le résumé affiché (sujet, SAN = `HUB_HOSTNAME`, dates, chaîne) puis

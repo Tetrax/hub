@@ -45,7 +45,10 @@ fi
 
 install -m 0644 "$REPO/deploy/hub-cert-helper.service" /etc/systemd/system/hub-cert-helper.service
 systemctl daemon-reload
-systemctl enable --now hub-cert-helper.service
+# `enable --now` ne redémarre pas un service déjà actif : restart charge le
+# code fraîchement installé (réinstallation après une mise à jour).
+systemctl enable hub-cert-helper.service
+systemctl restart hub-cert-helper.service
 sleep 1
 
 if ! systemctl is-active --quiet hub-cert-helper.service; then

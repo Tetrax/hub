@@ -7,6 +7,7 @@ Utilisation (dans le conteneur ou en local) :
     python -m app.manage invalidate-sessions          # révoque toutes les sessions actives
     python -m app.manage report-orphans               # screenshots non référencés
     python -m app.manage set-password                 # équivalent de reset-admin (alias)
+    python -m app.manage setup-token                  # jeton de première configuration (/admin/setup)
 
 Le mot de passe n'est jamais passé en argument : saisie interactive masquée.
 """
@@ -103,7 +104,24 @@ def _reset_admin() -> int:
         return 1
     auth.update_password(connection, 1, password)
     auth.destroy_all_sessions(connection)
-    print("Mot de passe administrateur réinitialisé ; toutes les sessions ont été invalidées.")
+    auth.clear_all_failures(connection)
+    print(
+        "Mot de passe administrateur réinitialisé ; toutes les sessions ont été invalidées "
+        "et les verrous de connexion levés."
+    )
+    return 0
+
+
+def _setup_token() -> int:
+    """Affiche le jeton exigé par /admin/setup tant qu'aucun compte principal n'existe."""
+    from flask import current_app
+
+    connection = auth.db_connection()
+    if auth.has_admin(connection):
+        print("Un compte administrateur existe déjà : aucun jeton de premier démarrage.")
+        return 1
+    print("Jeton de premier démarrage (à saisir sur /admin/setup) :")
+    print(auth.ensure_setup_token(current_app.config["DATA_DIR"]))
     return 0
 
 
@@ -153,6 +171,8 @@ def main(argv: list[str]) -> int:
             return _seed(argv[1] if len(argv) > 1 else None)
         if command in {"reset-admin", "set-password"}:
             return _reset_admin()
+        if command == "setup-token":
+            return _setup_token()
         if command == "invalidate-sessions":
             return _invalidate_sessions()
         if command == "report-orphans":

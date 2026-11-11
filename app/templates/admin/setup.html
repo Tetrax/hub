@@ -11,13 +11,23 @@
       Aucun compte administrateur n'existe encore. Créez-le maintenant :
       aucun mot de passe par défaut n'est utilisé.
     </p>
+    <p class="auth-sub">
+      Le jeton de premier démarrage prouve que vous administrez ce serveur. Lisez-le
+      dans le conteneur (console Portainer ou <code>docker compose exec web</code>) :
+      <code>python -m app.manage setup-token</code>
+    </p>
     {% include "admin/_flashes.html" %}
     <form method="post" action="{{ url_for('admin.setup') }}">
       <input type="hidden" name="_csrf" value="{{ csrf }}">
       <div class="form-field">
+        <label class="form-label" for="setup_token">Jeton de premier démarrage</label>
+        <input class="input mono" id="setup_token" name="setup_token" type="password"
+               autocomplete="off" spellcheck="false" required autofocus>
+      </div>
+      <div class="form-field">
         <label class="form-label" for="username">Identifiant</label>
         <input class="input" id="username" name="username" value="{{ username }}"
-               autocomplete="username" required minlength="3" maxlength="64" autofocus>
+               autocomplete="username" required minlength="3" maxlength="64">
       </div>
       <div class="form-field">
         <label class="form-label" for="password">Mot de passe (12 octets minimum)</label>

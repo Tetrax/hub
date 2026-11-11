@@ -33,6 +33,11 @@ SMTP_PASSWORD = "smtp-password"
 MICROSOFT365_CLIENT_SECRET = "microsoft365-client-secret"
 GITHUB_TOKEN = "github-token"
 SECRET_NAMES = (SMTP_PASSWORD, MICROSOFT365_CLIENT_SECRET, GITHUB_TOKEN)
+# Jeton de premier démarrage (D27) : même stockage protégé, mais ce n'est pas un
+# secret administrable — absent de SECRET_NAMES, donc ni affiché ni supprimable
+# depuis la section Sécurité. Il disparaît dès que le compte principal existe.
+SETUP_TOKEN = "setup-token"
+_STORED_NAMES = SECRET_NAMES + (SETUP_TOKEN,)
 SECRETS_DIRNAME = "secrets"
 MAX_SECRET_BYTES = 4096
 
@@ -65,7 +70,7 @@ def secrets_dir(data_dir: Path | str) -> Path:
 
 
 def secret_path(data_dir: Path | str, name: str) -> Path:
-    if name not in SECRET_NAMES:
+    if name not in _STORED_NAMES:
         raise ValueError("Secret inconnu.")
     return secrets_dir(data_dir) / name
 

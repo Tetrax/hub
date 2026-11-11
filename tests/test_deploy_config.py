@@ -252,6 +252,15 @@ def test_install_helper_tolerates_missing_certbot():
     assert "systemd est requis" in content
 
 
+def test_reinstalling_the_helper_reloads_its_code():
+    # `enable --now` ne redémarre pas un service déjà actif : une réinstallation
+    # laisserait tourner l'ancien code. Le service doit être redémarré.
+    content = read("scripts/install-helper.sh")
+    assert "systemctl enable hub-cert-helper.service" in content
+    assert "systemctl restart hub-cert-helper.service" in content
+    assert "systemctl enable --now" not in content
+
+
 # --- Nginx générique ---------------------------------------------------------
 
 
