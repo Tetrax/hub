@@ -397,3 +397,27 @@ def test_pkcs12_import_leaves_no_file_behind(cert_app, helper, tmp_path):
     after = sorted(path.relative_to(data_dir) for path in data_dir.rglob("*"))
     assert after == before
     assert not list(data_dir.rglob("*.p12")) and not list(data_dir.rglob("*.pfx"))
+
+
+
+def test_activation_without_nginx_reload_does_not_claim_a_reload(cert_app, helper):
+    # HUB_CERT_RELOAD_NGINX=0 : le helper bascule la paire sans tester, recharger ni
+    # vérifier Nginx. L'interface ne doit pas annoncer le contraire.
+    helper["processor"].nginx = None
+    client = admin_client(cert_app)
+    csrf = session_csrf(client, cert_app)
+    certificate, key = leaf_certificate()
+    response = client.post(
+        "/admin/certificates/validate",
+        data={**upload_payload(certificate, key), "_csrf": csrf},
+        content_type="multipart/form-data",
+    )
+    ticket = TICKET_RE.search(response.get_data()).group(1).decode("ascii")
+    page = client.post(
+        "/admin/certificates/activate",
+        data={"_csrf": csrf, "ticket": ticket},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert "Certificat activé" in page
+    assert "a été rechargé" not in page
+    assert "Nginx n&#39;a pas été rechargé" in page or "Nginx n'a pas été rechargé" in page
