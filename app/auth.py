@@ -28,7 +28,7 @@ from functools import wraps
 
 from flask import abort, current_app, g, redirect, request, url_for
 
-from . import db
+from . import db, secretstore
 
 SESSION_COOKIE = "hub_session"
 SCRYPT_N = 16384
@@ -38,8 +38,19 @@ PASSWORD_MIN_BYTES = 12
 PASSWORD_MAX_BYTES = 1024
 USERNAME_MIN = 3
 USERNAME_MAX = 64
+# Verrouillage des connexions. Les compteurs portent sur trois clés :
+# - le couple identifiant + IP (LOCK_THRESHOLD) : l'attaquant ne bloque que
+#   lui-même, jamais l'administrateur légitime connecté d'ailleurs ;
+# - l'IP seule (IP_LOCK_THRESHOLD) : freine une adresse qui essaie beaucoup
+#   d'identifiants ;
+# - l'identifiant seul (USER_LOCK_THRESHOLD, élevé) : borne une attaque répartie
+#   sur de nombreuses adresses sans offrir un déni de service à 5 essais.
+# Un compteur repart de zéro quand son premier échec sort de la fenêtre.
 LOCK_THRESHOLD = 5
+IP_LOCK_THRESHOLD = 20
+USER_LOCK_THRESHOLD = 100
 LOCK_SECONDS = 15 * 60
+FAILURE_WINDOW_SECONDS = 15 * 60
 
 ROLE_ADMIN = "admin"
 ROLE_MODERATOR = "moderator"
@@ -121,6 +132,39 @@ def has_admin(connection) -> bool:
 def admin_username(connection) -> str | None:
     row = connection.execute("SELECT username FROM admin_users WHERE id = 1").fetchone()
     return row["username"] if row else None
+
+
+# --- Jeton de premier démarrage ------------------------------------------------
+#
+# Tant qu'aucun compte principal n'existe, /admin/setup exige ce jeton : seul
+# l'opérateur qui a accès au conteneur peut le lire
+# (`python -m app.manage setup-token`). Il vit dans le stockage protégé des
+# secrets (0600) et n'est jamais journalisé ni rendu dans une page.
+
+
+def ensure_setup_token(data_dir) -> str:
+    """Jeton courant ; créé s'il n'existe pas encore."""
+    token = secretstore.read_secret(data_dir, secretstore.SETUP_TOKEN)
+    if not token:
+        secretstore.write_secret(data_dir, secretstore.SETUP_TOKEN, secrets.token_urlsafe(32))
+        # Relecture : si deux workers écrivent en même temps, le fichier fait foi.
+        token = secretstore.read_secret(data_dir, secretstore.SETUP_TOKEN)
+    return token
+
+
+def setup_token_ok(data_dir, submitted: object) -> bool:
+    expected = secretstore.read_secret(data_dir, secretstore.SETUP_TOKEN)
+    return bool(
+        expected
+        and isinstance(submitted, str)
+        and submitted
+        and submitted.isascii()  # compare_digest lève TypeError sur du non-ASCII
+        and hmac.compare_digest(expected, submitted)
+    )
+
+
+def discard_setup_token(data_dir) -> None:
+    secretstore.delete_secret(data_dir, secretstore.SETUP_TOKEN)
 
 
 def create_admin(connection, username: str, password: str) -> bool:
@@ -413,10 +457,20 @@ def _attempt_key(scope: str, value: str) -> str:
     return f"{scope}:{value}"
 
 
+def _attempt_keys(username: str, ip: str) -> tuple[tuple[str, int], ...]:
+    """Clés de compteur et seuil de chacune (voir LOCK_THRESHOLD)."""
+    user = username.lower()
+    return (
+        (_attempt_key("pair", f"{user}|{ip}"), LOCK_THRESHOLD),
+        (_attempt_key("ip", ip), IP_LOCK_THRESHOLD),
+        (_attempt_key("user", user), USER_LOCK_THRESHOLD),
+    )
+
+
 def lock_remaining(connection, username: str, ip: str) -> int:
     now = db.now_iso()
     remaining = 0
-    for key in (_attempt_key("user", username.lower()), _attempt_key("ip", ip)):
+    for key, _threshold in _attempt_keys(username, ip):
         row = connection.execute(
             "SELECT locked_until FROM login_attempts WHERE key = ?", (key,)
         ).fetchone()
@@ -427,9 +481,11 @@ def lock_remaining(connection, username: str, ip: str) -> int:
 
 
 def register_failure(connection, username: str, ip: str) -> None:
+    """Compte un échec sur chaque clé ; à appeler dans la transaction du contrôle."""
     now = db.utc_now()
     now_s = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    for key in (_attempt_key("user", username.lower()), _attempt_key("ip", ip)):
+    window_start = (now - timedelta(seconds=FAILURE_WINDOW_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for key, threshold in _attempt_keys(username, ip):
         row = connection.execute(
             "SELECT failures, first_at FROM login_attempts WHERE key = ?", (key,)
         ).fetchone()
@@ -441,22 +497,32 @@ def register_failure(connection, username: str, ip: str) -> None:
             )
             continue
         failures = row["failures"] + 1
+        first_at = row["first_at"]
+        if not first_at or first_at < window_start:
+            # Premier échec hors fenêtre : le compteur repart de cet échec.
+            failures, first_at = 1, now_s
         locked_until = None
-        if failures >= LOCK_THRESHOLD:
+        if failures >= threshold:
             locked_until = (now + timedelta(seconds=LOCK_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            failures = 0 if locked_until else failures
+            failures, first_at = 0, now_s
         connection.execute(
-            "UPDATE login_attempts SET failures = ?, last_at = ?, locked_until = ? WHERE key = ?",
-            (failures, now_s, locked_until, key),
+            "UPDATE login_attempts SET failures = ?, first_at = ?, last_at = ?, locked_until = ? "
+            "WHERE key = ?",
+            (failures, first_at, now_s, locked_until, key),
         )
     connection.commit()
 
 
 def clear_failures(connection, username: str, ip: str) -> None:
-    connection.execute(
-        "DELETE FROM login_attempts WHERE key IN (?, ?)",
-        (_attempt_key("user", username.lower()), _attempt_key("ip", ip)),
-    )
+    """Après un succès : lève les compteurs de ce couple, de cette IP et de ce compte."""
+    keys = [key for key, _threshold in _attempt_keys(username, ip)]
+    connection.execute("DELETE FROM login_attempts WHERE key IN (?, ?, ?)", keys)
+    connection.commit()
+
+
+def clear_all_failures(connection) -> None:
+    """Lève tous les verrous de connexion (reprise opérateur : reset-admin)."""
+    connection.execute("DELETE FROM login_attempts")
     connection.commit()
 
 

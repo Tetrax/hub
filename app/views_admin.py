@@ -111,6 +111,15 @@ def setup():
         if not origin_ok(request, _trusted()) or not _preauth_csrf_ok():
             abort(403)
         username = (request.form.get("username") or "").strip() or "admin"
+        data_dir = current_app.config["DATA_DIR"]
+        if not auth.setup_token_ok(data_dir, request.form.get("setup_token")):
+            current_app.logger.warning("Première configuration refusée : jeton invalide")
+            flash(
+                "Jeton de premier démarrage invalide. Lisez-le dans le conteneur avec "
+                "« python -m app.manage setup-token ».",
+                "error",
+            )
+            return render_template("admin/setup.html", csrf=_preauth_csrf(), username=username), 403
         password = request.form.get("password") or ""
         confirmation = request.form.get("confirmation") or ""
         error = None
@@ -127,6 +136,7 @@ def setup():
         if not auth.create_admin(connection, username, password):
             flash("Un compte administrateur existe déjà.", "error")
             return redirect(url_for("admin.login"))
+        auth.discard_setup_token(data_dir)
         token, _ = auth.create_session(connection, 1, username)
         response = redirect(url_for("admin.dashboard"))
         auth.set_session_cookie(response, token)
@@ -146,15 +156,18 @@ def login():
         username = (request.form.get("username") or "").strip()
         password = request.form.get("password") or ""
         ip = client_ip(request, _trusted())
+        # Contrôle du verrou, vérification, insertion de session ou comptage de
+        # l'échec partagent le verrou SQLite : des essais simultanés ne peuvent
+        # pas tous passer le contrôle avant l'enregistrement du premier échec, et
+        # un reset/désactivation ne peut s'intercaler pour laisser un ancien login
+        # créer une nouvelle session après la révocation.
+        connection.execute("BEGIN IMMEDIATE")
         remaining = auth.lock_remaining(connection, username, ip)
         if remaining > 0:
+            connection.rollback()
             minutes = max(1, remaining // 60 + 1)
             flash(f"Trop de tentatives échouées. Nouvelle tentative possible dans {minutes} min.", "error")
             return render_template("admin/login.html", csrf=_preauth_csrf()), 429
-        # La vérification et l'insertion de session partagent le verrou SQLite :
-        # un reset/désactivation ne peut s'intercaler et laisser un ancien login
-        # créer une nouvelle session après la révocation.
-        connection.execute("BEGIN IMMEDIATE")
         account = auth.authenticate(connection, username, password)
         if account is not None:
             token, _ = auth.create_session(connection, account["id"], account["username"])
@@ -163,8 +176,7 @@ def login():
             response = redirect(url_for("admin.dashboard"))
             auth.set_session_cookie(response, token)
             return response
-        connection.rollback()
-        auth.register_failure(connection, username, ip)
+        auth.register_failure(connection, username, ip)  # valide la transaction
         current_app.logger.warning("Échec de connexion administrateur (identifiant refusé)")
         flash("Identifiants invalides.", "error")
     return render_template("admin/login.html", csrf=_preauth_csrf())

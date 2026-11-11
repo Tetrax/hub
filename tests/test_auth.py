@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from app import auth
+
 from conftest import (
     ADMIN_PASSWORD,
     ADMIN_USERNAME,
@@ -59,7 +61,13 @@ def test_setup_rejects_short_password(app, client):
         preauth = flask_session.get("preauth_csrf")
     response = client.post(
         "/admin/setup",
-        data={"username": "admin", "password": "court", "confirmation": "court", "_csrf": preauth},
+        data={
+            "username": "admin",
+            "password": "court",
+            "confirmation": "court",
+            "_csrf": preauth,
+            "setup_token": auth.ensure_setup_token(app.config["DATA_DIR"]),
+        },
     )
     assert response.status_code == 200
     assert "au moins" in response.get_data(as_text=True)

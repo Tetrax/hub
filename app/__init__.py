@@ -22,6 +22,25 @@ class _SchemeAwareSessionInterface(SecureCookieSessionInterface):
         return is_https(request, app.extensions["hub_trusted_proxies"])
 
 
+def _prepare_first_run(app: Flask) -> None:
+    """Sans compte principal : jeton de premier démarrage prêt, consigne dans les logs.
+
+    Le jeton lui-même n'est jamais journalisé : seule la commande pour le lire l'est.
+    """
+    connection = db.connect(app.config["DB_PATH"])
+    try:
+        configured = auth.has_admin(connection)
+    finally:
+        connection.close()
+    if configured:
+        return
+    auth.ensure_setup_token(app.config["DATA_DIR"])
+    app.logger.warning(
+        "Première configuration en attente : /admin/setup exige le jeton de premier "
+        "démarrage, lisible avec « python -m app.manage setup-token » dans le conteneur."
+    )
+
+
 def create_app(config_overrides: dict | None = None) -> Flask:
     config = load_config(overrides=config_overrides)
     app = Flask(__name__)
@@ -68,6 +87,7 @@ def create_app(config_overrides: dict | None = None) -> Flask:
     # sans CIDR, les en-têtes X-Forwarded-* sont ignorés (voir app/security.py).
     app.extensions["hub_trusted_proxies"] = parse_cidrs(config["TRUSTED_PROXY_CIDRS"])
     db.init_db(app.config["DB_PATH"])
+    _prepare_first_run(app)
     app.teardown_appcontext(auth.close_db)
 
     from .views_admin import bp as admin_bp
