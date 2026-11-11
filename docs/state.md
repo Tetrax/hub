@@ -1,10 +1,25 @@
 # SNS Hub — État du projet
 
 Dernière mise à jour : 2026-11-11 (UTC)
-Statut : **V1.7.0 + correctifs du scan de sécurité déployés et vérifiés en
-production le 2026-11-11 à 01:42 UTC** — commit servi
-`5332cfbd6f1fa8535d06996f8829a6253ed47ef5`, image
-`sha256:dfd5bfbb79f092f929cb9650adf5b1fc419f1c7d9f3d72a9bc319b049f8b2bf2`.
+Statut : **V1.7.0 + correctifs des scans de sécurité déployés et vérifiés en
+production le 2026-11-11 à 18:51 UTC** — commit servi
+`ef1da2cef737dc770238fcb68ae97fe9bf780cac`, image
+`sha256:6f982911d9f660779e6fafb18c93bf99b46edd1f2e57de943fc5770fec6ff55b`.
+
+Dernier lot ([PR #6](https://github.com/Tetrax/hub/pull/6), complément D27) :
+le scan diff `scan_b2f8df8d6c1d74ecc8f87259` des correctifs a relevé une
+croissance non bornée de `login_attempts` (identifiant soumis recopié dans les
+clés, sans purge) ; clés à empreinte SHA-256 et purge des compteurs expirés,
+**PASS de la revue indépendante N3** (carte `t_76397106`, candidat `ed77e77`),
+651 tests, CI verte. Vérifié en production : table d'une seule ligne de 12
+caractères avant bascule (aucune trace d'exploitation, pas de VACUUM nécessaire),
+identifiant de 2 Mo → clés de 79 caractères au plus, ancienne clé en clair
+purgée, sonde supprimée, conteneur healthy sans redémarrage. Sauvegarde avant
+bascule : `hub-backup-20261111T185030Z.tar.gz`. Rollback : image
+`hub:5332cfbd6f1fa8535d06996f8829a6253ed47ef5` (ignore les clés à empreinte ;
+la croissance non bornée réapparaît).
+
+Lot précédent (01:42 UTC, commit `5332cfb`) :
 
 Scan `hermes-security` (standard, statique) du 2026-11-10 : aucune faille grave ;
 corrections en deux PR — [#3](https://github.com/Tetrax/hub/pull/3) (robustesse,
