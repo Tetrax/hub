@@ -4,10 +4,12 @@ iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0
 pytest==9.1.1
+# Dépendance de pytest, épinglée pour sortir des versions vulnérables (ReDoS).
+pygments==2.21.0
 
 # Recette navigateur réelle (tests/browser/) et conversions d'images.
 # Sur un poste neuf : `playwright install chromium`.
 playwright==1.63.0
-pillow==12.3.0
+pillow==13.0.0
 # Lecture des fichiers Compose rendus dans les tests de déploiement (V1.4).
 pyyaml==6.0.2
