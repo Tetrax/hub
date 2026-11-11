@@ -62,7 +62,12 @@ def _preauth_csrf() -> str:
 def _preauth_csrf_ok() -> bool:
     expected = flask_session.get("preauth_csrf")
     submitted = request.form.get("_csrf")
-    return bool(expected and submitted and secrets.compare_digest(expected, submitted))
+    return bool(
+        expected
+        and submitted
+        and submitted.isascii()  # compare_digest lève TypeError sur du non-ASCII
+        and secrets.compare_digest(expected, submitted)
+    )
 
 
 # --- Tableau de bord ---------------------------------------------------------

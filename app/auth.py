@@ -324,7 +324,12 @@ def purge_expired_sessions(connection) -> None:
 
 
 def _request_token() -> str | None:
-    return request.cookies.get(SESSION_COOKIE)
+    token = request.cookies.get(SESSION_COOKIE)
+    # Nos jetons sont en base64url : une valeur non ASCII ne peut être qu'invalide
+    # (refusée comme anonyme, jamais une erreur 500).
+    if not token or not token.isascii():
+        return None
+    return token
 
 
 def load_session() -> dict | None:
@@ -476,6 +481,7 @@ def csrf_ok(session: dict, submitted: str | None) -> bool:
     return bool(
         session
         and isinstance(submitted, str)
+        and submitted.isascii()  # compare_digest lève TypeError sur du non-ASCII
         and hmac.compare_digest(session["csrf_token"], submitted)
     )
 
