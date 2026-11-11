@@ -34,9 +34,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
+    import hub_cert_lock
     import hub_certctl
-except ImportError:  # exécution depuis le dépôt : le module vit dans helper/
+except ImportError:  # exécution depuis le dépôt : les modules vivent dans helper/
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "helper"))
+    import hub_cert_lock  # type: ignore[no-redef]
     import hub_certctl  # type: ignore[no-redef]
 
 from .certbackend import CertBackendError
@@ -255,45 +257,48 @@ class LocalTlsBackend:
             expected = _fingerprint(blocks[0])
 
             self.certs_dir.mkdir(parents=True, exist_ok=True)
-            previous = hub_certctl.current_generation(self.active_path)
-            generation = hub_certctl.activate(self.active_path, fullchain, key_pem)
-            try:
-                self._reload()
-                if not self._wait_for_served(expected, self.reload_timeout):
-                    raise CertBackendError(
-                        "Le certificat présenté par le serveur HTTPS ne correspond pas "
-                        "au certificat activé."
-                    )
-            except Exception as error:  # noqa: BLE001 — rollback systématique
-                hub_certctl.restore(self.active_path, previous)
-                hub_certctl.cleanup_generation(self.certs_dir, generation)
-                warning = ""
-                if previous:
-                    try:
-                        self._reload()
-                        current = (self.active_path / "fullchain.pem").read_bytes()
-                        restored_fp = _fingerprint(hub_certctl.certificate_blocks(current)[0])
-                        if not self._wait_for_served(restored_fp, self.reload_timeout):
+            # Même verrou que le helper root et le hook certbot : deux activations
+            # simultanées ne peuvent pas entrelacer bascule, rechargement et rollback.
+            with hub_cert_lock.certificate_directory_lock(self.certs_dir):
+                previous = hub_certctl.current_generation(self.active_path)
+                generation = hub_certctl.activate(self.active_path, fullchain, key_pem)
+                try:
+                    self._reload()
+                    if not self._wait_for_served(expected, self.reload_timeout):
+                        raise CertBackendError(
+                            "Le certificat présenté par le serveur HTTPS ne correspond pas "
+                            "au certificat activé."
+                        )
+                except Exception as error:  # noqa: BLE001 — rollback systématique
+                    hub_certctl.restore(self.active_path, previous)
+                    hub_certctl.cleanup_generation(self.certs_dir, generation)
+                    warning = ""
+                    if previous:
+                        try:
+                            self._reload()
+                            current = (self.active_path / "fullchain.pem").read_bytes()
+                            restored_fp = _fingerprint(hub_certctl.certificate_blocks(current)[0])
+                            if not self._wait_for_served(restored_fp, self.reload_timeout):
+                                warning = (
+                                    " Le certificat présenté ne correspond pas non plus à la paire "
+                                    "précédente : intervention nécessaire sur le conteneur."
+                                )
+                        except Exception:  # noqa: BLE001 — signalé, jamais masqué
                             warning = (
-                                " Le certificat présenté ne correspond pas non plus à la paire "
+                                " Le serveur HTTPS n'a pas pu être rechargé avec la paire "
                                 "précédente : intervention nécessaire sur le conteneur."
                             )
-                    except Exception:  # noqa: BLE001 — signalé, jamais masqué
-                        warning = (
-                            " Le serveur HTTPS n'a pas pu être rechargé avec la paire "
-                            "précédente : intervention nécessaire sur le conteneur."
-                        )
-                raise CertBackendError(
-                    f"Activation refusée : {error} — paire précédente restaurée.{warning}"
-                ) from error
+                    raise CertBackendError(
+                        f"Activation refusée : {error} — paire précédente restaurée.{warning}"
+                    ) from error
 
-            summary = hub_certctl.build_summary(fullchain, self.hostname)
-            hub_certctl.cleanup_generation(self.certs_dir, previous)
-            # Le certificat définitif remplace le certificat temporaire de bootstrap.
-            try:
-                self.marker_path.unlink()
-            except FileNotFoundError:
-                pass
+                summary = hub_certctl.build_summary(fullchain, self.hostname)
+                hub_certctl.cleanup_generation(self.certs_dir, previous)
+                # Le certificat définitif remplace le certificat temporaire de bootstrap.
+                try:
+                    self.marker_path.unlink()
+                except FileNotFoundError:
+                    pass
             return {
                 "ok": True,
                 "backend": self.label,

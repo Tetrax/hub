@@ -33,6 +33,8 @@ RUN apt-get update \
  && apt-get install --yes --no-install-recommends openssl \
  && rm -rf /var/lib/apt/lists/*
 COPY helper/hub_certctl.py ./hub_certctl.py
+# Verrou d'activation partagé avec le helper root (même fichier, même règle).
+COPY helper/hub_cert_lock.py ./hub_cert_lock.py
 
 # Le conteneur tourne en lecture seule (compose) ; seuls /data et /tmp sont inscriptibles.
 # Les sources doivent rester lisibles par l'utilisateur applicatif (uid 1000).

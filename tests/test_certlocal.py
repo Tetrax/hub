@@ -445,3 +445,34 @@ def test_import_from_outside_container_uses_helpers_module():
     assert hasattr(hub_certctl, "validate_pair")
     certificate, _ = leaf_certificate()
     assert hub_certctl.certificate_fingerprint(certificate)
+
+
+
+def test_activation_holds_the_certificate_directory_lock(backend, monkeypatch):
+    # Deux activations simultanées (deux onglets, deux threads) ne doivent jamais
+    # entrelacer leurs bascules : même verrou que le helper root (hub_cert_lock).
+    import fcntl
+
+    import hub_certctl
+
+    observed = {}
+    real_activate = hub_certctl.activate
+
+    def probing_activate(active_path, fullchain, key_pem):
+        lock_path = Path(backend.certs_dir) / ".certctl.lock"
+        descriptor = os.open(lock_path, os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            observed["locked"] = True
+        else:
+            observed["locked"] = False
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+        return real_activate(active_path, fullchain, key_pem)
+
+    monkeypatch.setattr(hub_certctl, "activate", probing_activate)
+    certificate, key = leaf_certificate()
+    backend.activate_certificate(backend.validate_certificate(certificate, key, b"")["ticket"])
+    assert observed == {"locked": True}

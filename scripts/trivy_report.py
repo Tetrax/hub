@@ -67,6 +67,12 @@ def load_report(path: Path) -> tuple[dict | None, list[Finding], str | None]:
     return report, _findings(report), None
 
 
+def _one_line(value) -> str:
+    """Valeur du rapport sur une seule ligne : un retour à la ligne ne doit jamais ouvrir
+    une commande GitHub (``::error::``…) sur stdout ni une ligne dans le Step Summary."""
+    return " ".join(str(value or "").split())
+
+
 def _findings(report: dict) -> list[Finding]:
     """Aplatit ``Results[].Vulnerabilities[]`` en tolérant tout champ absent ou inhabituel."""
     findings: list[Finding] = []
@@ -78,12 +84,12 @@ def _findings(report: dict) -> list[Finding]:
                 continue
             findings.append(
                 Finding(
-                    cve=str(item.get("VulnerabilityID") or "?"),
-                    package=str(item.get("PkgName") or "?"),
-                    installed_version=str(item.get("InstalledVersion") or "—"),
-                    fixed_version=str(item.get("FixedVersion") or "—"),
-                    severity=str(item.get("Severity") or "UNKNOWN").upper(),
-                    title=" ".join(str(item.get("Title") or "").split()),
+                    cve=_one_line(item.get("VulnerabilityID")) or "?",
+                    package=_one_line(item.get("PkgName")) or "?",
+                    installed_version=_one_line(item.get("InstalledVersion")) or "—",
+                    fixed_version=_one_line(item.get("FixedVersion")) or "—",
+                    severity=(_one_line(item.get("Severity")) or "UNKNOWN").upper(),
+                    title=_one_line(item.get("Title")),
                 )
             )
     findings.sort(key=lambda finding: (severity_rank(finding.severity), finding.package, finding.cve))
@@ -102,15 +108,15 @@ def counts(findings: list[Finding]) -> dict[str, int]:
 
 
 def _artifact_name(report: dict) -> str:
-    return str(report.get("ArtifactName") or "image analysée")
+    return _one_line(report.get("ArtifactName")) or "image analysée"
 
 
 def scan_context(report: dict) -> tuple[str, str]:
     """``(image, système)`` — l'OS est la source de la plupart des correctifs d'une base épinglée."""
     metadata = report.get("Metadata")
     os_info = metadata.get("OS") if isinstance(metadata, dict) else None
-    family = str(os_info.get("Family") or "").strip() if isinstance(os_info, dict) else ""
-    name = str(os_info.get("Name") or "").strip() if isinstance(os_info, dict) else ""
+    family = _one_line(os_info.get("Family")) if isinstance(os_info, dict) else ""
+    name = _one_line(os_info.get("Name")) if isinstance(os_info, dict) else ""
     system = " ".join(part for part in (family, name) if part) or "système non précisé"
     return _artifact_name(report), system
 

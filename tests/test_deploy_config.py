@@ -287,6 +287,16 @@ def test_backup_script_is_portable():
     assert "chmod 600" in content  # archive protégée
 
 
+def test_backup_archives_are_private_from_creation():
+    # `chmod 600` après `tar` laisse une fenêtre où l'archive (clé de session,
+    # secrets, clé privée TLS) est lisible par les autres comptes locaux : le
+    # umask restrictif doit précéder toute création de fichier.
+    content = read("scripts/backup.sh")
+    assert "umask 077" in content
+    assert content.index("umask 077") < content.index('mkdir -p "$DEST"')
+    assert content.index("umask 077") < content.index("tar -czf")
+
+
 def test_prepare_data_dir_script_matches_documented_command():
     content = read("scripts/prepare-data-dir.sh")
     assert "HUB_UID" in content and "HUB_GID" in content and "HUB_DATA_PATH" in content
@@ -326,6 +336,8 @@ def test_application_image_embeds_the_shared_certificate_module():
     """Le backend standalone réutilise hub_certctl : une seule implémentation."""
     dockerfile = read("Dockerfile")
     assert "COPY helper/hub_certctl.py ./hub_certctl.py" in dockerfile
+    # Même verrou d'activation que le helper root (hub_cert_lock) : une seule source.
+    assert "COPY helper/hub_cert_lock.py ./hub_cert_lock.py" in dockerfile
     assert "openssl" in dockerfile
     # L'utilisateur applicatif doit posséder /data et /certs : un volume nommé est
     # initialisé depuis l'image, donc sans commande d'initialisation sur l'hôte.

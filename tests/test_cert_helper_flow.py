@@ -142,6 +142,16 @@ def test_install_without_reload(tmp_path):
     installed = processor.install(result["fullchain"], result["key"], result["summary"])
     assert installed["previous"] is None
     assert (processor.output_dir / "fullchain.pem").read_bytes() == cert_pem
+    # Sans Nginx, rien n'a été testé, rechargé ni vérifié : le résultat le dit.
+    assert installed["nginxReloaded"] is False
+
+
+def test_install_with_reload_reports_nginx_reloaded(tmp_path):
+    processor = make_processor(tmp_path, FakeNginx())
+    cert_pem, key_pem = leaf_certificate()
+    result = hub_certctl.validate_pair(cert_pem, key_pem, b"", "hub.valdev.me")
+    installed = processor.install(result["fullchain"], result["key"], result["summary"])
+    assert installed["nginxReloaded"] is True
 
 
 def test_status_reports_absence_then_presence(tmp_path):

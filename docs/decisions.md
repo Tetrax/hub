@@ -920,3 +920,40 @@ y est nullable, les colonnes ajoutées sont ignorées) ; ses sessions sans
 compatible avec l'ancienne image : restaurer une sauvegarde v3 compatible ou
 rester en V1.7. L'arrêt des writers et l'invalidation sont les invariants de
 sécurité du rollback.
+
+
+## D26 — Scan de sécurité de novembre 2026 : corrections et risques acceptés
+
+**Contexte.** Revue statique `hermes-security` (scan
+`scan_c5e80d698014a60136342bd0`, mode standard, sans exécution) sur `cfe3c45` :
+aucune faille grave, deux points d'authentification moyens et une série de
+durcissements.
+
+**Corrigé (lots robustesse et exploitation).** Archives de sauvegarde privées dès
+leur création (`umask 077`) ; actions CI épinglées par SHA + Dependabot ;
+sauvegardes et bundles de clés exclus du contexte de build ; rapport Trivy sur une
+seule ligne par valeur (pas d'injection de commande de workflow) ; jetons de
+session/CSRF non ASCII refusés (401/403) au lieu d'une erreur 500 ; attribut
+`Secure` du cookie Flask décidé par requête (plus d'écriture dans `app.config`
+partagé entre threads) ; activation sans Nginx (`HUB_CERT_RELOAD_NGINX=0`) signalée
+comme telle (`nginxReloaded`) au lieu d'annoncer un rechargement ; activations
+standalone sérialisées par le même `hub_cert_lock` que le helper ; werkzeug 3.1.9,
+pillow 13.0.0, pygments 2.21.0.
+
+**Risques acceptés.**
+
+- **Hôte SMTP interne** : l'administrateur principal peut viser n'importe quel
+  hôte/port et lire le type d'échec du test d'envoi. C'est le transport voulu
+  (D23) ; l'acteur détient déjà la configuration sensible du Hub. Pas de liste
+  d'hôtes autorisés.
+- **Racine de confiance fournie à l'import** : `validate_chain` accepte la racine
+  de la chaîne fournie (`-partial_chain`). C'est ce qui permet les certificats
+  internes et auto-signés (standalone) ; le nom, la clé, les dates et le
+  chargement TLS restent vérifiés. Restreindre aux AC publiques casserait D16.
+- **Schéma « v4 » sur une base migrée depuis v3** : `sessions.user_id` y reste
+  nullable par choix (compatibilité de rollback, D25) ; `load_session` refuse un
+  `user_id` NULL.
+
+**Traité à part (authentification, revue indépendante).** Verrouillage de
+connexion par nom d'utilisateur (déni de service sur le compte principal), course
+entre contrôle et incrément du verrou, et premier démarrage sans jeton.

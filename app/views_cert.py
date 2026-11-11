@@ -202,7 +202,7 @@ def activate():
     session_row = auth.require_session()
     _require_csrf(session_row)
     ticket = (request.form.get("ticket") or "").strip()
-    if not ticket:
+    if not ticket or not ticket.isascii():  # tickets base64url : non ASCII = invalide
         flash("Ticket de validation manquant ; relancez la validation.", "error")
         return redirect(url_for("cert.certificates"))
     ticket_hash = hashlib.sha256(ticket.encode("ascii")).hexdigest()
@@ -229,11 +229,23 @@ def activate():
         current_app.logger.info(
             "Certificat : activation réussie (expire le %s)", summary.get("notAfter", "?")
         )
-        target = "le serveur HTTPS du Hub" if result.get("backend") == "local" else "Nginx"
-        flash(
-            f"Certificat activé : {target} a été rechargé et le certificat servi a été vérifié.",
-            "success",
-        )
+        if result.get("backend") == "local":
+            message = (
+                "Certificat activé : le serveur HTTPS du Hub a été rechargé et le "
+                "certificat servi a été vérifié."
+            )
+        elif result.get("nginxReloaded") is True:
+            message = (
+                "Certificat activé : Nginx a été rechargé et le certificat servi a été vérifié."
+            )
+        else:
+            # Helper sans rechargement (HUB_CERT_RELOAD_NGINX=0) ou ancien helper
+            # muet : ne jamais annoncer un rechargement qui n'a pas eu lieu.
+            message = (
+                "Certificat activé dans le répertoire géré. Nginx n'a pas été rechargé "
+                "ni vérifié par le helper : rechargez-le puis contrôlez le certificat servi."
+            )
+        flash(message, "success")
     finally:
         connection.execute("DELETE FROM cert_validations WHERE ticket_hash = ?", (ticket_hash,))
         connection.commit()

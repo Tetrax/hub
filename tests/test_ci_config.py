@@ -8,6 +8,7 @@ l'image applicative.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -109,3 +110,32 @@ def test_trivy_stays_out_of_the_image_and_requirements():
     # Le contexte de build ne doit embarquer ni données persistantes ni secrets.
     for excluded in ("runtime", ".env", "scripts", "tests"):
         assert excluded in dockerignore, f"{excluded} doit être exclu du contexte d'image"
+
+
+def test_build_context_excludes_backups_and_key_bundles():
+    # Les archives de backup.sh (base, clé de session, secrets, clé privée TLS) et
+    # les bundles de clés ne doivent jamais entrer dans le contexte de build.
+    patterns = {
+        line.strip()
+        for line in (REPO / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    for excluded in ("backups", "*.p12", "*.pfx", "*.key", "*.pem", ".claude"):
+        assert excluded in patterns, f"{excluded} doit être exclu du contexte d'image"
+
+
+def test_every_action_is_pinned_to_a_commit_sha():
+    # Un tag (`@v7`) est mobile : seul un SHA de commit fige le code exécuté par la CI.
+    # Le tag lisible reste en commentaire pour Dependabot et la relecture.
+    uses = re.findall(r"uses:\s*(\S+)(.*)", workflow_text())
+    assert uses, "le workflow doit référencer des actions"
+    for reference, comment in uses:
+        action, _, ref = reference.partition("@")
+        assert re.fullmatch(r"[0-9a-f]{40}", ref), f"{action} doit être épinglée par SHA (trouvé « {ref} »)"
+        assert re.search(r"#\s*v\d", comment), f"{action} : indiquer la version en commentaire"
+
+
+def test_dependabot_keeps_pinned_actions_up_to_date():
+    config = yaml.safe_load((REPO / ".github/dependabot.yml").read_text(encoding="utf-8"))
+    ecosystems = {update["package-ecosystem"] for update in config["updates"]}
+    assert "github-actions" in ecosystems

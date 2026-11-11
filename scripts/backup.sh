@@ -5,6 +5,9 @@
 # Destination : HUB_BACKUP_DIR (environnement, sinon valeur lue dans `.env`,
 # sinon ./backups/hub). Nombre d'archives conservées : HUB_BACKUP_KEEP (défaut 10).
 set -euo pipefail
+# Archives et copies temporaires privées dès leur création (clé de session,
+# secrets, clé privée TLS) : aucune fenêtre lisible avant le chmod 600.
+umask 077
 cd "$(dirname "$0")/.."
 REPO="$PWD"
 

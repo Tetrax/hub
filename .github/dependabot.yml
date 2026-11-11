@@ -1,0 +1,8 @@
+# Montées de version des actions GitHub épinglées par SHA (ci.yml).
+# Dependabot ouvre une PR par mise à jour ; la CI (pytest) la valide avant merge.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

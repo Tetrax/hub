@@ -321,7 +321,9 @@ class CertHelperProcessor:
                         ) from rollback_error
                 raise
             hub_certctl.cleanup_generation(parent, previous)
-        return {"previous": previous, "summary": summary}
+        # Sans Nginx (HUB_CERT_RELOAD_NGINX=0), rien n'a été testé, rechargé ni
+        # vérifié : l'appelant doit pouvoir le dire au lieu d'annoncer un rechargement.
+        return {"previous": previous, "summary": summary, "nginxReloaded": self.nginx is not None}
 
     def _decode_payload(self, payload: object) -> tuple[bytes, bytes, bytes]:
         if not isinstance(payload, dict) or set(payload) != PAYLOAD_KEYS:

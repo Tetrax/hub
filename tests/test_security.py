@@ -151,3 +151,41 @@ def test_helper_socket_never_exposed(app, client):
         body = client.get(path).get_data(as_text=True)
         assert "BEGIN PRIVATE KEY" not in body
         assert "BEGIN CERTIFICATE" not in body
+
+
+
+# --- Robustesse des jetons (scan de sécurité 2026-11) -------------------------
+
+
+def test_non_ascii_session_cookie_is_anonymous_not_a_500(app, client):
+    setup_admin(client, app)
+    # Requête WSGI brute : le client de test réécrit sinon l'en-tête Cookie
+    # depuis son propre stock (un navigateur, lui, envoie les octets tels quels).
+    from werkzeug.test import EnvironBuilder, run_wsgi_app
+
+    environ = EnvironBuilder(path="/admin/", headers={"Cookie": "hub_session=\xe9t\xe9"}).get_environ()
+    _body, status, headers = run_wsgi_app(app, environ, buffered=True)
+    assert status.startswith("302")
+    assert "/admin/login" in headers["Location"]
+
+
+def test_non_ascii_csrf_token_is_refused_not_a_500(app, client):
+    setup_admin(client, app)
+    assert client.post("/admin/logout", data={"_csrf": "\xe9"}).status_code == 403
+    fresh = app.test_client()
+    fresh.get("/admin/login")
+    response = fresh.post(
+        "/admin/login", data={"username": "admin", "password": "x", "_csrf": "\xe9"}
+    )
+    assert response.status_code == 403
+
+
+def test_https_detection_never_mutates_the_shared_app_config(app, client):
+    # Le schéma est propre à chaque requête : l'écrire dans app.config (partagé par
+    # tous les threads du worker) laissait une requête HTTP concurrente retirer
+    # l'attribut Secure du cookie d'une requête HTTPS.
+    before = app.config["SESSION_COOKIE_SECURE"]
+    client.get("/admin/setup", headers={"X-Forwarded-Proto": "https"})
+    assert app.config["SESSION_COOKIE_SECURE"] == before
+    client.get("/admin/setup")
+    assert app.config["SESSION_COOKIE_SECURE"] == before
