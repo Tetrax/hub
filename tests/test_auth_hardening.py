@@ -100,6 +100,70 @@ def test_failure_counters_expire_after_the_window(configured, monkeypatch):
         connection.close()
 
 
+def _attempt_rows(app):
+    connection = db.connect(app.config["DB_PATH"])
+    try:
+        return connection.execute("SELECT key FROM login_attempts").fetchall()
+    finally:
+        connection.close()
+
+
+def test_a_huge_username_does_not_grow_the_database(configured):
+    # Les clés de verrou ne doivent pas recopier l'identifiant soumis : un
+    # visiteur anonyme pourrait sinon saturer le disque avec des identifiants
+    # de plusieurs mégaoctets (scan diff de novembre 2026).
+    huge = "a" * 200_000
+    _login_from(configured, "203.0.113.20", username=huge, password="mauvais")
+    rows = _attempt_rows(configured)
+    assert rows, "l'échec doit être compté"
+    assert max(len(row["key"]) for row in rows) <= 128
+
+
+def test_the_same_username_still_shares_its_counter_whatever_its_case(configured):
+    ip = "203.0.113.21"
+    for index in range(auth.LOCK_THRESHOLD):
+        name = ADMIN_USERNAME.upper() if index % 2 else ADMIN_USERNAME
+        _login_from(configured, ip, username=name, password="mauvais")
+    assert _login_from(configured, ip).status_code == 429
+
+
+def test_expired_counters_are_purged(configured, monkeypatch):
+    connection = db.connect(configured.config["DB_PATH"])
+    start = db.utc_now()
+    try:
+        monkeypatch.setattr(auth.db, "utc_now", lambda: start)
+        for index in range(3):
+            auth.register_failure(connection, f"ancien-{index}", "203.0.113.22")
+        assert connection.execute("SELECT COUNT(*) FROM login_attempts").fetchone()[0] == 7
+        later = start + timedelta(seconds=max(auth.FAILURE_WINDOW_SECONDS, auth.LOCK_SECONDS) + 1)
+        monkeypatch.setattr(auth.db, "utc_now", lambda: later)
+        monkeypatch.setattr(auth.db, "now_iso", lambda: later.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        auth.register_failure(connection, "nouveau", "203.0.113.23")
+        # Seules les trois clés de l'échec récent subsistent.
+        assert connection.execute("SELECT COUNT(*) FROM login_attempts").fetchone()[0] == 3
+    finally:
+        connection.close()
+
+
+def test_an_active_lock_is_not_purged(configured, monkeypatch):
+    connection = db.connect(configured.config["DB_PATH"])
+    start = db.utc_now()
+    ip = "203.0.113.24"
+    try:
+        monkeypatch.setattr(auth.db, "utc_now", lambda: start)
+        for _ in range(auth.LOCK_THRESHOLD):
+            auth.register_failure(connection, ADMIN_USERNAME, ip)
+        # Après la fenêtre de comptage mais avant la fin du verrou.
+        later = start + timedelta(seconds=auth.LOCK_SECONDS - 60)
+        monkeypatch.setattr(auth, "FAILURE_WINDOW_SECONDS", 60)
+        monkeypatch.setattr(auth.db, "utc_now", lambda: later)
+        monkeypatch.setattr(auth.db, "now_iso", lambda: later.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        auth.register_failure(connection, "autre-compte", "203.0.113.25")
+        assert auth.lock_remaining(connection, ADMIN_USERNAME, ip) > 0
+    finally:
+        connection.close()
+
+
 def test_simultaneous_failures_never_exceed_the_threshold(configured, monkeypatch):
     # Chaque essai doit consulter et incrémenter le compteur de façon atomique :
     # des requêtes parallèles ne peuvent pas toutes passer le contrôle avant
