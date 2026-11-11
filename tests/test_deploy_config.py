@@ -287,6 +287,16 @@ def test_backup_script_is_portable():
     assert "chmod 600" in content  # archive protégée
 
 
+def test_backup_archives_are_private_from_creation():
+    # `chmod 600` après `tar` laisse une fenêtre où l'archive (clé de session,
+    # secrets, clé privée TLS) est lisible par les autres comptes locaux : le
+    # umask restrictif doit précéder toute création de fichier.
+    content = read("scripts/backup.sh")
+    assert "umask 077" in content
+    assert content.index("umask 077") < content.index('mkdir -p "$DEST"')
+    assert content.index("umask 077") < content.index("tar -czf")
+
+
 def test_prepare_data_dir_script_matches_documented_command():
     content = read("scripts/prepare-data-dir.sh")
     assert "HUB_UID" in content and "HUB_GID" in content and "HUB_DATA_PATH" in content
