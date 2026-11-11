@@ -55,7 +55,9 @@ aucune requête vers elles.
   proxy, aucun helper, aucun socket Docker), pensé pour Portainer
   (*Stacks → Add stack → Repository*). Au premier démarrage, un **certificat
   temporaire auto-signé** est généré pour le nom DNS fourni : le Hub est
-  immédiatement joignable en HTTPS, on crée son compte, puis on installe le
+  immédiatement joignable en HTTPS, on crée son compte (jeton de premier
+  démarrage lu dans la console du conteneur : `python -m app.manage
+  setup-token`), puis on installe le
   certificat définitif (**PKCS#12 de la PKI**) depuis *Administration →
   Certificats* — **sans SSH et sans redémarrage** (le serveur est rechargé et le
   certificat réellement servi est vérifié, avec rollback en cas d'échec).

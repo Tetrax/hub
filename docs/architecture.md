@@ -97,7 +97,7 @@ structure (vérifié par comparaison des rendus `docker compose config`).
   sessions liées à l'identité, CSRF, verrouillage), `uploads.py` (validation
   par magic bytes), `urls.py`
   (validation d'entrées), `certparse.py` (lecture PKCS#12/PFX et DER, en mémoire),
-  `manage.py` (CLI d'exploitation : `seed`, `reset-admin`,
+  `manage.py` (CLI d'exploitation : `seed`, `reset-admin`, `setup-token`,
   `invalidate-sessions`, `report-orphans`).
   `catalog.py` porte aussi les catégories (CRUD, ordre, réassignation).
   Le parcours certificat passe par **`certbackend.py`** : `certclient.py` (helper
@@ -233,7 +233,8 @@ sans `mkdir`/`chown` sur l'hôte) :
 
 Session serveur (cookie `hub_session`, HttpOnly/Secure/SameSite=Strict, jeton
 haché en base) + jeton CSRF par session + contrôle d'origine sur les POST +
-verrouillage après échecs. CRUD complet, ordre (montée/descente), visibilité
+verrouillage après échecs (couple identifiant + IP, IP, identifiant — D27) +
+jeton de premier démarrage pour `/admin/setup`. CRUD complet, ordre (montée/descente), visibilité
 immédiate, téléversement de screenshots (PNG/JPEG/WebP, 4 Mo, magic bytes).
 
 ### Remplacement du certificat (admin)
