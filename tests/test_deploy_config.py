@@ -336,6 +336,8 @@ def test_application_image_embeds_the_shared_certificate_module():
     """Le backend standalone réutilise hub_certctl : une seule implémentation."""
     dockerfile = read("Dockerfile")
     assert "COPY helper/hub_certctl.py ./hub_certctl.py" in dockerfile
+    # Même verrou d'activation que le helper root (hub_cert_lock) : une seule source.
+    assert "COPY helper/hub_cert_lock.py ./hub_cert_lock.py" in dockerfile
     assert "openssl" in dockerfile
     # L'utilisateur applicatif doit posséder /data et /certs : un volume nommé est
     # initialisé depuis l'image, donc sans commande d'initialisation sur l'hôte.
