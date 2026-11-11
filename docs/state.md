@@ -1,34 +1,37 @@
 # SNS Hub — État du projet
 
-Dernière mise à jour : 2026-10-03 (UTC)
-Statut : **V1.7.0 déployée et vérifiée en production le 2026-10-03 à 09:07 UTC**.
-La [PR #1](https://github.com/Tetrax/hub/pull/1) est fusionnée ; commit servi
-`15cba24ee4c5d9b4d504eaee83e210d910639f0a`, image
-`sha256:81a4134d2bef506204dc8552a887dc9f0eba13a582d73df76598f93840cc2378`.
-Le correctif de concurrence `8791620` a reçu le **PASS indépendant de seconde
-revue** (carte `t_9ddd4150`, run327), après **620 tests pytest réussis** chez
-Builder puis Reviewer. La CI exacte du correctif (`37100664576`) et celle
-après fusion (`37111497640`) sont vertes. Aucun code changé après la revue.
+Dernière mise à jour : 2026-11-11 (UTC)
+Statut : **V1.7.0 + correctifs du scan de sécurité déployés et vérifiés en
+production le 2026-11-11 à 01:42 UTC** — commit servi
+`5332cfbd6f1fa8535d06996f8829a6253ed47ef5`, image
+`sha256:dfd5bfbb79f092f929cb9650adf5b1fc419f1c7d9f3d72a9bc319b049f8b2bf2`.
 
-Recette complète rejouée sur une instance isolée de l'**image effectivement
-déployée** : **95/95 PASS** (deux skips HTTP attendus, aucun skip modérateur).
-Recette publique sur le vrai HTTPS, depuis le VPS : **41/41 PASS**. Conteneur
-healthy, zéro redémarrage, version/SHA cohérents, accès anonyme aux comptes
-redirigé vers la connexion, certificat servi inchangé, `nginx -t` valide et
-helper actif. Aucun compte de test créé en production et aucun reset du
-principal ; son parcours authentifié de production n'a pas été rejoué faute
-de session disponible (parcours complet exercé en isolation).
+Scan `hermes-security` (standard, statique) du 2026-11-10 : aucune faille grave ;
+corrections en deux PR — [#3](https://github.com/Tetrax/hub/pull/3) (robustesse,
+CI, sauvegarde, dépendances — D26) et [#4](https://github.com/Tetrax/hub/pull/4)
+(verrouillage des connexions par couple identifiant + IP, contrôle atomique,
+jeton de premier démarrage — D27, **PASS de la revue indépendante N3**, carte
+`t_6a588f65`, sur le candidat exact `c31e516`). 647 tests pytest, CI verte sur les
+deux PR, recette standalone réelle 65/0 (navigateur inclus), recette VM générique
+44/0.
 
-Sauvegarde cohérente avant bascule, writers arrêtés :
-`hub-backup-20261003T090734Z.tar.gz` et archive certificats associée sous
-`/home/tetrax/backups/hub/` (archives vérifiées). Comparaison à la sauvegarde
-après migration `20261003T090826Z` : **neuf tables et toutes anciennes colonnes,
-six applications, six captures et identité/hash du principal conservés** ;
-schéma v3 → v4, intégrité et clés étrangères OK. Aucune restauration nécessaire.
-Rollback conservé : image V1.6.2 `hub:734457d2059a571d5982a48202072175278df80f`,
-avec invalidation hors ligne obligatoire selon `operations.md` §17.
-`AGENTS.md` reste inchangé : sa mise à jour protégée est différée faute
-d'approbation. Les commits documentaires de clôture ne redéploient pas l'image.
+Vérifié en production après déploiement : conteneur healthy, version/SHA
+cohérents, landing 200, `/admin/setup` redirigé vers la connexion (compte
+existant), `setup-token` refusé (compte existant), cookie `Secure` derrière
+Nginx, cookie de session non ASCII redirigé vers la connexion (plus de 500),
+échec de connexion compté sur les nouvelles clés (`pair:`, `user:` ; sonde
+supprimée ensuite), helper réinstallé et redémarré (nouveau code chargé,
+`servedMatches` vrai). Aucun compte créé ni reset du principal.
+
+Sauvegardes avant bascule : `hub-backup-20261111T013716Z.tar.gz` et
+`hub-backup-20261111T014236Z.tar.gz` (+ archives certificats) sous
+`/home/tetrax/backups/hub/`. Pas de migration de schéma.
+Rollback conservé : image V1.7.0 `hub:15cba24ee4c5d9b4d504eaee83e210d910639f0a`
+(même schéma v4 ; `HUB_IMAGE_TAG=<sha> docker compose up -d`) ; les nouvelles
+clés `pair:`/`ip:` et le fichier `secrets/setup-token` sont ignorés par l'image
+précédente. Restent non bloquants (revue N3) : DoS réparti borné à 100 échecs
+par compte (renouvelable, `reset-admin` le lève) ; IP source masquée possible en
+standalone selon le proxy Docker.
 
 > Ce fichier est le point de reprise opérationnel du projet. Il décrit ce qui est
 > déployé, comment le vérifier, et ce qui reste à faire. Les détails techniques

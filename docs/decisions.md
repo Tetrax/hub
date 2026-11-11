@@ -972,7 +972,9 @@ standalone (443 publié sur toutes les interfaces).
 
 **Décision.**
 
-- **Trois compteurs** sur une fenêtre glissante de 15 min, verrou de 15 min :
+- **Trois compteurs** sur une fenêtre fixe de 15 min ancrée sur le premier échec
+  (pic possible d'environ 2 × (seuil − 1) à la frontière, débit moyen inchangé),
+  verrou de 15 min :
   couple identifiant + IP (5 échecs), IP seule (20), identifiant seul (100). Un
   tiers ne bloque que sa propre adresse ; une adresse qui essaie de nombreux
   identifiants est freinée ; une attaque répartie sur un compte reste bornée sans
