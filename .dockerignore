@@ -15,3 +15,11 @@ __pycache__
 .ruff_cache
 .env
 .env.*
+# Archives de scripts/backup.sh (base, clé de session, secrets, clé privée TLS)
+# et bundles de clés : jamais dans le contexte de build.
+backups
+*.p12
+*.pfx
+*.key
+*.pem
+.claude
