@@ -155,7 +155,7 @@ docker compose exec web python -m app.manage reset-admin
 
 ## Tests
 
-- `tests/` : 647 tests pytest (validation d'entrées, uploads, auth, CRUD,
+- `tests/` : 651 tests pytest (validation d'entrées, uploads, auth, CRUD,
   catégories, migration, thème, branding (`HUB_BRAND_LABEL`), vues du catalogue
   (Cartes/Liste), bundles PKCS#12/PFX et DER, landing, sécurité,
   certificats/rollback, intégration app ↔ helper par socket, configuration de

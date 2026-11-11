@@ -1001,7 +1001,23 @@ Création du compte par CLI uniquement : rejeté — la procédure standalone do
 rester faisable depuis l'interface Portainer.
 
 **Conséquences / rollback.** Aucune migration de schéma (mêmes colonnes de
-`login_attempts`, nouvelles clés `pair:`/`ip:`/`user:`). Les anciennes clés
-`user:` restent lues comme le compteur global. Une instance déjà configurée
-n'est pas concernée par le jeton. Retour arrière : l'image précédente ignore le
-fichier `secrets/setup-token` et les clés `pair:`.
+`login_attempts`, nouvelles clés `pair:`/`ip:`/`user:`). Une instance déjà
+configurée n'est pas concernée par le jeton. Retour arrière : l'image précédente
+ignore le fichier `secrets/setup-token` et les clés `pair:`.
+
+**Complément (scan diff du 2026-11-11).** Les clés recopiaient l'identifiant
+soumis, non borné sur ce formulaire anonyme, et n'étaient jamais purgées : un
+visiteur pouvait faire grossir la base (jusqu'à ~8 Mio par clé, débit seulement
+freiné par le verrou d'IP). Désormais :
+
+- l'identifiant n'apparaît que sous forme d'empreinte SHA-256 de sa forme en
+  minuscules (`pair:<empreinte>|<ip>`, `user:<empreinte>`) ; l'IP, déjà validée
+  par `client_ip`, reste en clair ; les seuils et la fusion casse/espaces sont
+  inchangés ;
+- chaque échec purge d'abord les compteurs sortis de la fenêtre sans verrou
+  actif : la table reste bornée au trafic des 15 dernières minutes, sans tâche
+  planifiée.
+
+Pas de migration : les anciennes clés en clair ne sont plus lues (un compteur en
+cours repart de zéro au déploiement) et disparaissent à la première purge.
+L'image précédente ignore de même les clés à empreinte.
