@@ -457,9 +457,19 @@ def _attempt_key(scope: str, value: str) -> str:
     return f"{scope}:{value}"
 
 
+def _username_digest(username: str) -> str:
+    """Empreinte de longueur fixe : une clé ne recopie jamais l'identifiant soumis.
+
+    Le formulaire de connexion est anonyme et l'identifiant n'y est pas borné :
+    le stocker tel quel permettrait de faire grossir la base sans limite. L'IP,
+    elle, est déjà validée (`client_ip`) et donc de taille bornée.
+    """
+    return hashlib.sha256(username.lower().encode("utf-8", "surrogatepass")).hexdigest()
+
+
 def _attempt_keys(username: str, ip: str) -> tuple[tuple[str, int], ...]:
     """Clés de compteur et seuil de chacune (voir LOCK_THRESHOLD)."""
-    user = username.lower()
+    user = _username_digest(username)
     return (
         (_attempt_key("pair", f"{user}|{ip}"), LOCK_THRESHOLD),
         (_attempt_key("ip", ip), IP_LOCK_THRESHOLD),
@@ -485,6 +495,14 @@ def register_failure(connection, username: str, ip: str) -> None:
     now = db.utc_now()
     now_s = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     window_start = (now - timedelta(seconds=FAILURE_WINDOW_SECONDS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Purge des compteurs sans effet : hors fenêtre et sans verrou actif. Leur
+    # suppression ne change aucune décision (un compteur expiré repart de zéro)
+    # et borne la table au trafic des 15 dernières minutes.
+    connection.execute(
+        "DELETE FROM login_attempts WHERE last_at < ? "
+        "AND (locked_until IS NULL OR locked_until <= ?)",
+        (window_start, now_s),
+    )
     for key, threshold in _attempt_keys(username, ip):
         row = connection.execute(
             "SELECT failures, first_at FROM login_attempts WHERE key = ?", (key,)
