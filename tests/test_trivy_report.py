@@ -257,3 +257,25 @@ def test_findings_alone_never_produce_a_non_zero_exit(tmp_path):
     report = write_report(tmp_path, report_payload())
     code, _stdout = run_main(["trivy_report.py", str(report)])
     assert code == 0
+
+
+def test_report_strings_cannot_inject_workflow_commands_or_summary_lines(tmp_path):
+    # Le rapport vient d'une image construite par la CI : un nom de paquet, une version
+    # ou un nom d'image contenant un retour à la ligne ne doit jamais ouvrir une ligne
+    # commençant par une commande GitHub (`::error::`, `::add-mask::`…) sur stdout,
+    # ni une nouvelle ligne dans le Step Summary.
+    payload = report_payload(
+        (("evil\n::error::injecte", "CVE-2026-1", "HIGH", "1.0\n::add-mask::x", "1.1\r\n## titre"),)
+    )
+    payload["ArtifactName"] = "hub\n::error::image"
+    payload["Metadata"]["OS"]["Name"] = "13.6\n::error::os"
+    report, findings, unavailable = trivy_report.load_report(write_report(tmp_path, payload))
+    assert unavailable is None
+
+    annotations = trivy_report.render_annotations(findings, None, report=report)
+    for annotation in annotations:
+        assert "\n" not in annotation and "\r" not in annotation
+    summary = trivy_report.render_summary(findings, None, report=report)
+    for line in summary.splitlines():
+        assert not line.lstrip().startswith("::"), line
+        assert not line.startswith("## titre"), line
