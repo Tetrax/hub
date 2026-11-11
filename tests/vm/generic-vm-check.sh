@@ -108,11 +108,17 @@ check_eq "landing = 200" "200" "$("${CURL[@]}" -o /dev/null -w '%{http_code}' "$
 check_contains "landing : contenu rendu" "SNS" "$LANDING"
 check_contains "landing : données de thème" "data-theme" "$LANDING"
 
-# Première configuration (compte local de cette instance jetable).
+# Première configuration (compte local de cette instance jetable). Le jeton de
+# premier démarrage se lit dans le conteneur, comme le ferait l'opérateur.
+SETUP_TOKEN="$(docker compose -p "$PROJECT" -f compose.yaml exec -T web python -m app.manage setup-token 2>/dev/null | tail -n 1)"
+check "jeton de premier démarrage lisible dans le conteneur" test -n "$SETUP_TOKEN"
 "${CURL[@]}" -c "$JAR" -L "$BASE_URL/admin/setup" -o "$ROOT/setup.html"
 TOKEN="$(grep -oP 'name="_csrf" value="\K[^"]+' "$ROOT/setup.html" | head -1)"
+check_eq "setup sans jeton refusé" "403" "$("${CURL[@]}" -b "$JAR" -c "$JAR" -o /dev/null -w '%{http_code}' \
+  -d "_csrf=$TOKEN" -d "username=intrus" -d "password=MotDePasseIntrus2026" -d "confirmation=MotDePasseIntrus2026" \
+  "$BASE_URL/admin/setup")"
 "${CURL[@]}" -b "$JAR" -c "$JAR" -o /dev/null -w '' \
-  -d "_csrf=$TOKEN" -d "username=vmcheck" -d "password=MotDePasseVmCheck2026" -d "confirmation=MotDePasseVmCheck2026" \
+  --data-urlencode "setup_token=$SETUP_TOKEN" -d "_csrf=$TOKEN" -d "username=vmcheck" -d "password=MotDePasseVmCheck2026" -d "confirmation=MotDePasseVmCheck2026" \
   "$BASE_URL/admin/setup"
 check_eq "admin : tableau de bord accessible" "200" "$("${CURL[@]}" -b "$JAR" -o /dev/null -w '%{http_code}' "$BASE_URL/admin/")"
 

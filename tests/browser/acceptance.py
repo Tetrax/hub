@@ -11,6 +11,7 @@ Variables :
     HUB_BASE_URL          URL de base à tester (par défaut http://127.0.0.1:13744)
     HUB_ADMIN_PASSWORD    mot de passe admin existant (sinon : compté comme absent)
     HUB_ADMIN_USER        identifiant admin (par défaut admin)
+    HUB_SETUP_TOKEN       jeton de premier démarrage (instance neuve uniquement)
     HUB_SCOPE             `full` (défaut) ou `public` (sans administration)
     HUB_SCREENSHOTS_DIR   dossier de captures d'applications à téléverser (optionnel)
     HUB_SKIP_CERT         `1` : ignores les vérifications du certificat (instance locale)
@@ -44,6 +45,7 @@ SHOTS_DIR = Path(os.environ.get("HUB_SHOTS_DIR", "/tmp/hub-acceptance"))
 APPS_SHOTS = os.environ.get("HUB_SCREENSHOTS_DIR", "")
 ADMIN_USER = os.environ.get("HUB_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("HUB_ADMIN_PASSWORD", "")
+SETUP_TOKEN = os.environ.get("HUB_SETUP_TOKEN", "")
 SCOPE = os.environ.get("HUB_SCOPE", "full").strip().lower()
 SKIP_CERT = os.environ.get("HUB_SKIP_CERT", "").strip() == "1"
 HOST_RESOLVER = os.environ.get("HUB_HOST_RESOLVER", "").strip()
@@ -390,6 +392,13 @@ def main() -> int:
                     admin_ready = True
                     check("Connexion admin existante", True)
             else:
+                if not SETUP_TOKEN:
+                    print(
+                        "Première configuration : fournir HUB_SETUP_TOKEN "
+                        "(python -m app.manage setup-token dans le conteneur).",
+                        file=sys.stderr,
+                    )
+                page.fill("#setup_token", SETUP_TOKEN)
                 page.fill("#username", ADMIN_USER)
                 page.fill("#password", password)
                 page.fill("#confirmation", password)
