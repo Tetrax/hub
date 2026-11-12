@@ -47,21 +47,34 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(args.cert, args.key)
+    def new_context() -> ssl.SSLContext:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(args.cert, args.key)
+        return context
+
+    # Comme gunicorn, chaque connexion est chiffrée avec le contexte courant, et
+    # un rechargement construit un contexte neuf au lieu de modifier celui en
+    # service : recharger la paire d'un SSLContext pendant qu'un autre thread
+    # fait une poignée de main avec lui fait planter OpenSSL (SIGSEGV, test
+    # intermittent).
+    state = {"context": new_context()}
 
     def reload_pair(*_):
         if args.ignore_hup:
             return
         try:
-            context.load_cert_chain(args.cert, args.key)
+            state["context"] = new_context()
         except (OSError, ssl.SSLError):
             pass
 
     signal.signal(signal.SIGHUP, reload_pair)
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), _Handler)
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    class _Server(http.server.ThreadingHTTPServer):
+        def get_request(self):
+            connection, address = self.socket.accept()
+            return state["context"].wrap_socket(connection, server_side=True), address
+
+    server = _Server(("127.0.0.1", args.port), _Handler)
     port = server.socket.getsockname()[1]
     if args.pidfile:
         Path(args.pidfile).write_text(f"{os.getpid()}\n", encoding="ascii")
@@ -70,7 +83,11 @@ def main(argv: list[str]) -> int:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        thread.join()
+        # Attente par tranches : Python n'exécute les gestionnaires de signaux
+        # que dans le thread principal ; un join() sans délai pourrait ne pas
+        # être interrompu si le noyau remet SIGHUP à un autre thread.
+        while thread.is_alive():
+            thread.join(0.1)
     except KeyboardInterrupt:
         pass
     finally:
