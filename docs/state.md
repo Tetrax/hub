@@ -2,9 +2,19 @@
 
 Dernière mise à jour : 2026-11-11 (UTC)
 Statut : **V1.7.0 + correctifs des scans de sécurité déployés et vérifiés en
-production le 2026-11-11 à 18:51 UTC** — commit servi
-`ef1da2cef737dc770238fcb68ae97fe9bf780cac`, image
-`sha256:6f982911d9f660779e6fafb18c93bf99b46edd1f2e57de943fc5770fec6ff55b`.
+production le 2026-11-12 à 20:07 UTC** — commit servi
+`8f4162ce2dad467384581f7fd28d0c92c1c035c7`.
+
+Dernier lot ([PR #8](https://github.com/Tetrax/hub/pull/8), remarques non
+bloquantes de la revue N3) : `client_ip` ignore une IPv6 avec zone dans
+`X-Forwarded-For` (vérifié en production : `fe80::1%…` → IP du pair, aucune
+zone stockée ; sonde supprimée) ; serveur TLS de test stabilisé (plantage
+SIGSEGV en rechargeant un `SSLContext` en service, 4/200 → 0/400 ; production non
+concernée). 652 tests, CI verte. Sauvegarde avant bascule :
+`hub-backup-20261112T200623Z.tar.gz`. Rollback : image
+`hub:ef1da2cef737dc770238fcb68ae97fe9bf780cac`.
+
+Lot du 2026-11-11 18:51 UTC (commit `ef1da2c`) :
 
 Dernier lot ([PR #6](https://github.com/Tetrax/hub/pull/6), complément D27) :
 le scan diff `scan_b2f8df8d6c1d74ecc8f87259` des correctifs a relevé une
