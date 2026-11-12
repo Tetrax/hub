@@ -1021,3 +1021,9 @@ freiné par le verrou d'IP). Désormais :
 Pas de migration : les anciennes clés en clair ne sont plus lues (un compteur en
 cours repart de zéro au déploiement) et disparaissent à la première purge.
 L'image précédente ignore de même les clés à empreinte.
+
+Revue N3 de ce complément, remarque traitée ensuite : `client_ip` acceptait une
+IPv6 avec zone (`fe80::1%<texte libre>`) venue de `X-Forwarded-For`, donc une
+« IP » de longueur arbitraire. Une adresse avec zone est désormais ignorée au
+profit du pair TCP (exploitable seulement si un proxy de confiance relayait
+l'en-tête du client tel quel ; les vhosts livrés le réécrivent).

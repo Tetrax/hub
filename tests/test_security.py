@@ -189,3 +189,30 @@ def test_https_detection_never_mutates_the_shared_app_config(app, client):
     assert app.config["SESSION_COOKIE_SECURE"] == before
     client.get("/admin/setup")
     assert app.config["SESSION_COOKIE_SECURE"] == before
+
+
+def test_forwarded_ip_with_zone_or_oversized_is_not_trusted():
+    # Une IPv6 « avec zone » (fe80::1%<texte arbitraire>) est acceptée par
+    # ipaddress : elle donnerait une IP cliente de longueur libre, recopiée
+    # dans les clés de verrou. Elle est ignorée au profit du pair TCP.
+    from ipaddress import ip_network
+
+    from werkzeug.test import EnvironBuilder
+
+    from app.security import client_ip
+
+    trusted = [ip_network("127.0.0.1/32")]
+
+    def resolved(forwarded: str) -> str:
+        environ = EnvironBuilder(
+            headers={"X-Forwarded-For": forwarded},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        ).get_environ()
+        from werkzeug.wrappers import Request
+
+        return client_ip(Request(environ), trusted)
+
+    assert resolved("203.0.113.7") == "203.0.113.7"
+    assert resolved("2001:db8::1") == "2001:db8::1"
+    assert resolved("fe80::1%" + "x" * 4000) == "127.0.0.1"
+    assert resolved("fe80::1%eth0") == "127.0.0.1"
