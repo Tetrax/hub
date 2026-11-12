@@ -54,10 +54,13 @@ def client_ip(request, trusted: list) -> str:
         if forwarded:
             candidate = forwarded.split(",")[-1].strip()
             try:
-                ip_address(candidate)
-                return candidate
+                parsed = ip_address(candidate)
             except ValueError:
-                pass
+                parsed = None
+            # Une zone IPv6 (`fe80::1%…`) est du texte libre : refusée, pour que
+            # l'IP cliente reste une adresse de taille bornée.
+            if parsed is not None and not getattr(parsed, "scope_id", None):
+                return candidate
     return request.remote_addr or "inconnu"
 
 
